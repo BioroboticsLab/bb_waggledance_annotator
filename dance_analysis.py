@@ -4,17 +4,29 @@ import math
 import csv
 import errno
 
+# possible user inputs:
+
+# double click - marks stop position (only once per video)
+# right click - marks bee position
+# space bar - pause video
+# speed trackbar - speed up/ slow down video
+# "5" - rewind 5 seconds
+# "6" - skip forward 5 seconds
+# "r" - restart video/ deletes already marked positions
+# "q" - quit/ end video (still saves data to file)
+
 
 def draw_template(img, cap, current_actuator, filepath):
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     img = cv2.putText(img, filepath, (600, do_video.height - 20), font, 1, (0, 0, 0), 1, cv2.LINE_AA)
 
-    for i in range(len(do_video.actuator_positions)):
-        img = cv2.circle(img, (do_video.actuator_positions[i][0], do_video.actuator_positions[i][1]), 10, (255, 0, 0), 2)
+    # draws actuators (temporarily removed since actuator positions are inaccurate)
+    # for i in range(len(do_video.actuator_positions)):
+    #     img = cv2.circle(img, (do_video.actuator_positions[i][0], do_video.actuator_positions[i][1]), 10, (255, 0, 0), 2)
 
-    if current_actuator[0]:
-        img = cv2.circle(img, (current_actuator[0][0], current_actuator[0][1]), 10, (255, 0, 0), 5) # mark activated actuator
+    # if current_actuator[0]:
+    #     img = cv2.circle(img, (current_actuator[0][0], current_actuator[0][1]), 10, (255, 0, 0), 5) # mark activated actuator
 
     calculate_time(cap)
     img = cv2.putText(img, "time in seconds: " + str(do_video.current_time), (20, do_video.height - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
@@ -120,9 +132,18 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
 
 
 def do_video():
-    filepath = "assets/23092021_07_52_34_2000HZ_mux0.mp4"
-    # filepath = "assets/23092021_07_58_37_2000HZ_mux7.mp4"
-    # filepath = "assets/23092021_07_45_57_2000HZ_muxa.mp4"
+    # the 10 videos
+    filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
+    # filepath = "23092021_11_36_02_2000HZ_muxa.mp4"
+    # filepath = "24092021_09_49_34_2000HZ_mux0.mp4"
+    # filepath = "24092021_09_45_15_2000HZ_mux3.mp4"
+    # filepath = "23092021_07_45_57_2000HZ_muxa.mp4"
+    # filepath = "28092021_10_27_18_2000HZ_mux2.mp4"
+    # filepath = "23092021_08_16_43_2000HZ_mux0.mp4"
+    # filepath = "23092021_10_33_04_2000HZ_mux4.mp4"
+    # filepath = "30092021_12_01_02_2000HZ_mux7.mp4"
+    # filepath = "24092021_08_20_20_2000HZ_mux0.mp4"
+
 
     min_max_candidates = []
     stop_position = []
