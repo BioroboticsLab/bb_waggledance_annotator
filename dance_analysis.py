@@ -240,10 +240,11 @@ def do_video():
 
         def current_bee_position(event, x, y, flags, frame):
             nonlocal min_max_candidates
+            nonlocal stop_position
             if event == cv2.EVENT_FLAG_RBUTTON:  # right click
                 save_min_max_candidate(current_frame, x, y)
-            elif event == cv2.EVENT_LBUTTONDBLCLK and not stop_position:  # double click
-                stop_position.append((x, y))
+            elif event == cv2.EVENT_LBUTTONDBLCLK:  # double click
+                stop_position = [(x, y)]
                 do_video.stopping_frame = current_frame
                 save_min_max_candidate(current_frame, x, y)
             
