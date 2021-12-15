@@ -34,10 +34,11 @@ def draw_template(img, cap, current_actuator, filepath):
     return img
 
 
-def draw_bee_positions(img, min_max_candidates, stop_position):
+def draw_bee_positions(img, min_max_candidates, stop_position, min_max_frames, current_frame):
 
-    for i in range(len(min_max_candidates)):
-        img = cv2.circle(img, (min_max_candidates[i][0], min_max_candidates[i][1]), 5, (0, 255, 0), 2)
+    for (xy, frame) in zip(min_max_candidates, min_max_frames):
+        radius = 5 if current_frame != frame else 10
+        img = cv2.circle(img, (xy[0], xy[1]), radius, (0, 255, 0), 2)
 
     if stop_position:
         img = cv2.circle(img, stop_position[0], 15, (0, 0, 255), 2)
@@ -209,7 +210,7 @@ def do_video():
         do_video.height = int(cap.get(4))
         
         frame = draw_template(frame, cap, current_actuator, filepath)
-        frame = draw_bee_positions(frame, min_max_candidates, stop_position)
+        frame = draw_bee_positions(frame, min_max_candidates, stop_position, do_video.bee_pos_frames, current_frame)
         cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
 
         if speed_fps <= 0 or is_in_pause_mode:
