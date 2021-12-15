@@ -234,6 +234,10 @@ def do_video():
             move_frame_count(-1)
         elif key == ord('d'):
             move_frame_count(+1)
+        elif key == ord('w'):
+            move_frame_count(+25)
+        elif key == ord('s'):
+            move_frame_count(-25)
         elif key == ord('5'):  # rewind ~5 seconds
             move_frame_count(-150)
         elif key == ord('6'):  # fast forward ~5 seconds
