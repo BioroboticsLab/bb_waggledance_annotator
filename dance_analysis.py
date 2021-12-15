@@ -4,6 +4,8 @@ import math
 import csv
 import errno
 
+import argparse, sys, os.path
+
 # possible user inputs:
 
 # double click - marks stop position (only once per video)
@@ -30,7 +32,7 @@ def draw_template(img, cap, current_actuator, filepath):
 
     calculate_time(cap)
     img = cv2.putText(img, "time in seconds: " + str(do_video.current_time), (20, do_video.height - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
-    
+
     return img
 
 
@@ -110,13 +112,13 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
     print("marked bee positions: " + str(min_max_candidates))
     print("bee position frames: " + str(do_video.bee_pos_frames))
     print("stop coordinate: " + str(stop_position))
-    print("stop time: " + str(do_video.stopping_frame))    
+    print("stop time: " + str(do_video.stopping_frame))
     print("min/max distances to actuator: " + str(min_max))
 
     # write to csv
     header = ['video name', 'activated actuator', 'min/max distances', 'stop coordinate', 'stop time', 'marked bee positions', 'bee position timestamps']
     data = [filepath, do_video.actuators[mux_index], min_max, stop_position, do_video.stopping_frame, min_max_candidates, do_video.bee_pos_frames]
-    
+
     try:
         file = open('data_analysis_23092021.csv', "x", newline='')
         writer = csv.writer(file)
@@ -124,7 +126,7 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
         file.close()
     except OSError as err:
         if err.errno != errno.EEXIST:
-            raise   
+            raise
         pass
     finally:
         with open("data_analysis_23092021.csv", "a", newline='') as file:
@@ -132,9 +134,9 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
             writer.writerow(data)
 
 
-def do_video():
+def do_video(filepath: str):
     # the 10 videos
-    filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
+    # filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
     # filepath = "23092021_11_36_02_2000HZ_muxa.mp4"
     # filepath = "24092021_09_49_34_2000HZ_mux0.mp4"
     # filepath = "24092021_09_45_15_2000HZ_mux3.mp4"
@@ -152,7 +154,7 @@ def do_video():
     do_video.current_time = 0 # Time for display purposes only.
     do_video.stopping_frame = 0
     do_video.bee_pos_frames = []
-    
+
     cap = cv2.VideoCapture(filepath)
     total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     original_frame_image = None
@@ -173,10 +175,10 @@ def do_video():
     do_video.actuator_positions = []
     do_video.actuators = []
 
-    current_actuator = []    
+    current_actuator = []
     actuator_pos, mux_index = define_actuator_positions(filepath)
     current_actuator.append(actuator_pos)
-    
+
     setup(cap)
 
     def move_frame_count(offset):
@@ -208,7 +210,7 @@ def do_video():
 
         do_video.width = int(cap.get(3))
         do_video.height = int(cap.get(4))
-        
+
         frame = draw_template(frame, cap, current_actuator, filepath)
         frame = draw_bee_positions(frame, min_max_candidates, stop_position, do_video.bee_pos_frames, current_frame)
         cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
@@ -252,14 +254,14 @@ def do_video():
                 stop_position = [(x, y)]
                 do_video.stopping_frame = current_frame
                 save_min_max_candidate(current_frame, x, y)
-            
+
         cv2.setMouseCallback("Frame", current_bee_position, frame)
         cv2.imshow("Frame", frame)
 
     min_max = []
     if min_max_candidates and current_actuator[0]:
         min_max = calculate_min_max(min_max_candidates, current_actuator)
-    
+
     cap.release()
     cv2.destroyAllWindows()
 
@@ -268,6 +270,38 @@ def do_video():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    #parser.add_argument('-v', '--verb', action='store_true')
+    parser.add_argument('-p', '--path', type=str, default="./",
+                        help="select path to video files")
+    parser.add_argument('-n', '--num', type=int, default=None,
+                        help='select the video number to analyse')
+    args = parser.parse_args()
 
-    do_video()
+    # the 10 videos
+
+    files = [
+        '23092021_07_45_57_2000HZ_muxa.mp4',
+        '23092021_08_01_22_2000HZ_muxa.mp4',
+        '23092021_08_16_43_2000HZ_mux0.mp4',
+        '23092021_10_33_04_2000HZ_mux4.mp4',
+        '23092021_11_36_02_2000HZ_muxa.mp4',
+        '24092021_08_20_20_2000HZ_mux0.mp4',
+        '24092021_09_45_15_2000HZ_mux3.mp4',
+        '24092021_09_49_34_2000HZ_mux0.mp4',
+        '28092021_10_27_18_2000HZ_mux2.mp4',
+        '30092021_12_01_02_2000HZ_mux7.mp4']
+    if args.num is None or args.num < 0 or args.num > len(files):
+        print(f"[E] we have {len(files)} files, pick one with -n <N>:")
+        print("\n".join([f"  {i:3d}:  {f}" for i, f in enumerate(files)]))
+        sys.exit(1) # lazy exit
+
+    vidfile = files[args.num]
+    print(f"[I] index {args.num} -> file {vidfile}")
+    filepath = os.path.join(args.path, vidfile)
+    if not os.path.exists(filepath):
+        raise RuntimeError("[E] file {filepath} not available. check --path option")
+
+
+    do_video(filepath)
     # To-do: loop through multiple files -> more efficient
