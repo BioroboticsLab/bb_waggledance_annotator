@@ -154,8 +154,10 @@ def do_video():
     
     cap = cv2.VideoCapture(filepath)
     total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    original_frame_image = None
     current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
     assert current_frame == 0
+    is_in_pause_mode = False
 
     def save_min_max_candidate(frame, x, y):
         nonlocal min_max_candidates
@@ -177,52 +179,61 @@ def do_video():
     setup(cap)
 
     while current_frame + 8 < total_frames:  # +8 for "error while decoding MB 57 57, bytestream -8"
-        ret, frame = cap.read()
-        if ret == True:
+        speed_fps = cv2.getTrackbarPos("Speed", "Frame")
+        has_valid_frame = True
 
-            speed_fps = cv2.getTrackbarPos("Speed", "Frame")
+        # Fetch a new frame if either the speed is > 0 or we are not currently pausing the video playback.
+        if (speed_fps > 0 and not is_in_pause_mode) or original_frame_image is None:
+            has_valid_frame, original_frame_image = cap.read()
+        frame = original_frame_image.copy()
 
-            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-
-            do_video.width = int(cap.get(3))
-            do_video.height = int(cap.get(4))
-            
-            frame = draw_template(frame, cap, current_actuator, filepath)
-            frame = draw_bee_positions(frame, min_max_candidates, stop_position)
-            cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
-
-            delay_ms = max(1, int(1000 / speed_fps)) if speed_fps > 0 else 0
-            key = cv2.waitKey(delay_ms)
-            if key == ord('q'):  # press q to exit video
-                break
-            elif key == ord(' '):  # spacebar as pause button
-                cv2.waitKey(0)
-            elif key == ord('r'):  # press r to restart video (and delete bee/stop positions)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                min_max_candidates.clear()
-                stop_position.clear()
-                do_video.stopping_time = 0
-                do_video.bee_pos_frames.clear()
-            elif key == ord('5'):  # rewind ~5 seconds
-                current_frame -= 150
-                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
-            elif key == ord('6'):  # fast forward ~5 seconds
-                current_frame += 150
-                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
-
-            def current_bee_position(event, x, y, flags, frame):
-                nonlocal min_max_candidates
-                if event == cv2.EVENT_FLAG_RBUTTON:  # right click
-                    save_min_max_candidate(current_frame, x, y)
-                elif event == cv2.EVENT_LBUTTONDBLCLK and not stop_position:  # double click
-                    stop_position.append((x, y))
-                    do_video.stopping_frame = current_frame
-                    save_min_max_candidate(current_frame, x, y)
-                
-            cv2.setMouseCallback("Frame", current_bee_position, frame)
-            cv2.imshow("Frame", frame)
-        else:
+        if not has_valid_frame:
             break
+
+        current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+
+        do_video.width = int(cap.get(3))
+        do_video.height = int(cap.get(4))
+        
+        frame = draw_template(frame, cap, current_actuator, filepath)
+        frame = draw_bee_positions(frame, min_max_candidates, stop_position)
+        cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
+
+        if speed_fps <= 0 or is_in_pause_mode:
+            # Arbitrary delay > 0, because we need to update the UI even in pause mode.
+            delay_ms = 50
+        else:
+            delay_ms = max(1, int(1000 / speed_fps))
+
+        key = cv2.waitKey(delay_ms)
+        if key == ord('q'):  # press q to exit video
+            break
+        elif key == ord(' '):  # spacebar as pause button
+            is_in_pause_mode = not is_in_pause_mode
+        elif key == ord('r'):  # press r to restart video (and delete bee/stop positions)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            min_max_candidates.clear()
+            stop_position.clear()
+            do_video.stopping_time = 0
+            do_video.bee_pos_frames.clear()
+        elif key == ord('5'):  # rewind ~5 seconds
+            current_frame -= 150
+            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+        elif key == ord('6'):  # fast forward ~5 seconds
+            current_frame += 150
+            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+
+        def current_bee_position(event, x, y, flags, frame):
+            nonlocal min_max_candidates
+            if event == cv2.EVENT_FLAG_RBUTTON:  # right click
+                save_min_max_candidate(current_frame, x, y)
+            elif event == cv2.EVENT_LBUTTONDBLCLK and not stop_position:  # double click
+                stop_position.append((x, y))
+                do_video.stopping_frame = current_frame
+                save_min_max_candidate(current_frame, x, y)
+            
+        cv2.setMouseCallback("Frame", current_bee_position, frame)
+        cv2.imshow("Frame", frame)
 
     min_max = []
     if min_max_candidates and current_actuator[0]:
