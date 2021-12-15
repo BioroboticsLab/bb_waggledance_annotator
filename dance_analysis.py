@@ -178,19 +178,32 @@ def do_video():
     
     setup(cap)
 
+    def move_frame_count(offset):
+        nonlocal current_frame
+        nonlocal cap
+        nonlocal total_frames
+        nonlocal original_frame_image
+
+        current_frame = min(max(current_frame + offset, 0), total_frames - 1)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+
+        # Clear current raw frame so we fetch a new one even if in pause mode.
+        original_frame_image = None
+
     while current_frame + 8 < total_frames:  # +8 for "error while decoding MB 57 57, bytestream -8"
         speed_fps = cv2.getTrackbarPos("Speed", "Frame")
         has_valid_frame = True
 
         # Fetch a new frame if either the speed is > 0 or we are not currently pausing the video playback.
         if (speed_fps > 0 and not is_in_pause_mode) or original_frame_image is None:
+            # Make sure to read the current frame number only BEFORE fetching an image.
+            # cap.read() will advance the frame number after reading.
+            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
             has_valid_frame, original_frame_image = cap.read()
         frame = original_frame_image.copy()
 
         if not has_valid_frame:
             break
-
-        current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
 
         do_video.width = int(cap.get(3))
         do_video.height = int(cap.get(4))
@@ -216,12 +229,14 @@ def do_video():
             stop_position.clear()
             do_video.stopping_time = 0
             do_video.bee_pos_frames.clear()
+        elif key == ord('a'):
+            move_frame_count(-1)
+        elif key == ord('d'):
+            move_frame_count(+1)
         elif key == ord('5'):  # rewind ~5 seconds
-            current_frame -= 150
-            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+            move_frame_count(-150)
         elif key == ord('6'):  # fast forward ~5 seconds
-            current_frame += 150
-            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+            move_frame_count(+150)
 
         def current_bee_position(event, x, y, flags, frame):
             nonlocal min_max_candidates
