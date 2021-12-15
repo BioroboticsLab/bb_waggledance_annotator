@@ -69,7 +69,7 @@ def setup(cap):
 
     def nothing(x):  # create Trackbar doesn't work without this
         pass
-    cv2.createTrackbar("Speed", "Frame", 10, 50, nothing)
+    cv2.createTrackbar("Speed", "Frame", 30, 60, nothing)
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cv2.createTrackbar("Frame", "Frame", 0, total_frames, nothing)
@@ -169,7 +169,7 @@ def do_video():
         ret, frame = cap.read()
         if ret == True:
 
-            speed = cv2.getTrackbarPos("Speed", "Frame")
+            speed_fps = cv2.getTrackbarPos("Speed", "Frame")
 
             current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
 
@@ -180,7 +180,8 @@ def do_video():
             frame = draw_bee_positions(frame, min_max_candidates, stop_position)
             cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
 
-            key = cv2.waitKey(speed)
+            delay_ms = max(1, int(1000 / speed_fps)) if speed_fps > 0 else 0
+            key = cv2.waitKey(delay_ms)
             if key == ord('q'):  # press q to exit video
                 break
             elif key == ord(' '):  # spacebar as pause button
