@@ -107,14 +107,14 @@ def calculate_min_max(min_max_candidates, current_actuator):
 def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index):
 
     print("marked bee positions: " + str(min_max_candidates))
-    print("bee position timestamps: " + str(do_video.bee_pos_timestamps))
+    print("bee position frames: " + str(do_video.bee_pos_frames))
     print("stop coordinate: " + str(stop_position))
-    print("stop time: " + str(do_video.stopping_time))    
+    print("stop time: " + str(do_video.stopping_frame))    
     print("min/max distances to actuator: " + str(min_max))
 
     # write to csv
     header = ['video name', 'activated actuator', 'min/max distances', 'stop coordinate', 'stop time', 'marked bee positions', 'bee position timestamps']
-    data = [filepath, do_video.actuators[mux_index], min_max, stop_position, do_video.stopping_time, min_max_candidates, do_video.bee_pos_timestamps]
+    data = [filepath, do_video.actuators[mux_index], min_max, stop_position, do_video.stopping_frame, min_max_candidates, do_video.bee_pos_frames]
     
     try:
         file = open('data_analysis_23092021.csv', "x", newline='')
@@ -148,13 +148,14 @@ def do_video():
     min_max_candidates = []
     stop_position = []
 
-    do_video.current_time = 0
-    do_video.stopping_time = 0
-    do_video.bee_pos_timestamps = []
+    do_video.current_time = 0 # Time for display purposes only.
+    do_video.stopping_frame = 0
+    do_video.bee_pos_frames = []
     
     cap = cv2.VideoCapture(filepath)
     total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
+    current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+    assert current_frame == 0
 
     do_video.actuator_positions = []
     do_video.actuators = []
@@ -171,7 +172,7 @@ def do_video():
 
             speed_fps = cv2.getTrackbarPos("Speed", "Frame")
 
-            current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
+            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
 
             do_video.width = int(cap.get(3))
             do_video.height = int(cap.get(4))
@@ -191,7 +192,7 @@ def do_video():
                 min_max_candidates.clear()
                 stop_position.clear()
                 do_video.stopping_time = 0
-                do_video.bee_pos_timestamps.clear()
+                do_video.bee_pos_frames.clear()
             elif key == ord('5'):  # rewind ~5 seconds
                 current_frame -= 150
                 cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
@@ -203,12 +204,12 @@ def do_video():
                 nonlocal min_max_candidates
                 if event == cv2.EVENT_FLAG_RBUTTON:  # right click
                     min_max_candidates.append([x, y])
-                    do_video.bee_pos_timestamps.append(do_video.current_time)
+                    do_video.bee_pos_frames.append(current_frame)
                 elif event == cv2.EVENT_LBUTTONDBLCLK and not stop_position:  # double click
                     stop_position.append((x, y))
                     min_max_candidates.append([x, y])  # since stop position can also be a min or max distance
-                    do_video.stopping_time = do_video.current_time
-                    do_video.bee_pos_timestamps.append(do_video.current_time)
+                    do_video.stopping_frame = current_frame
+                    do_video.bee_pos_frames.append(current_frame)
                 
             cv2.setMouseCallback("Frame", current_bee_position, frame)
             cv2.imshow("Frame", frame)
