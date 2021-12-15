@@ -17,6 +17,8 @@ import argparse, sys, os.path
 # "r" - restart video/ deletes already marked positions
 # "q" - quit/ end video (still saves data to file)
 
+# global, for skip forward/back
+FPS = 30
 
 def draw_template(img, cap, current_actuator, filepath):
 
@@ -133,8 +135,24 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
             writer = csv.writer(file)
             writer.writerow(data)
 
+def calc_frames_to_move(k32: int, debug: bool = False) -> int:
+    ''' from extended keycode, select nframes to advance or rewind.'''
+    # hmm modifiers are actually 17, 19, 20 bits away
+    ctrl  = (k32 & (1<<18)) >> 18
+    shift = (k32 & (1<<16)) >> 16
+    alt   = (k32 & (1<<19)) >> 19
+    modifiers = f"{ctrl:0x} {shift:0x} {alt:0x}"
+    if k32 != -1 and debug:
+        key = k32 & 0xFF
+        print('\033[34m' + f"KEY: {k32} 0x{k32:2x} |{key} 0x{key:2x} |{modifiers}|" +  '\033[0m')
+    nframes = 1
+    if shift: nframes = int(FPS * 1)
+    elif ctrl: nframes = int(FPS * 5)
+    elif alt: nframes = int(5)
 
-def do_video(filepath: str):
+    return nframes
+
+def do_video(filepath: str, debug: bool = False):
     # the 10 videos
     # filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
     # filepath = "23092021_11_36_02_2000HZ_muxa.mp4"
@@ -221,7 +239,12 @@ def do_video(filepath: str):
         else:
             delay_ms = max(1, int(1000 / speed_fps))
 
-        key = cv2.waitKey(delay_ms)
+        #key = cv2.waitKey(delay_ms)
+        k32 = cv2.waitKeyEx(delay_ms)
+        key = k32 & 0xFF
+
+        nframes = calc_frames_to_move(k32, debug)
+
         if key == ord('q'):  # press q to exit video
             break
         elif key == ord(' '):  # spacebar as pause button
@@ -232,10 +255,14 @@ def do_video(filepath: str):
             stop_position.clear()
             do_video.stopping_time = 0
             do_video.bee_pos_frames.clear()
-        elif key == ord('a'):
-            move_frame_count(-1)
-        elif key == ord('d'):
-            move_frame_count(+1)
+        elif key in [ord('a'), ord('A'), 0x51]: # 0x51 is left arrow
+            move_frame_count(-nframes)
+        elif key in [ord('d'), ord('D'), 0x53]:  # 0x53 is right arrow (weird, should be 37-40 LURD)
+            move_frame_count(+nframes)
+        #elif key == ord('a'):
+        #    move_frame_count(-1)
+        #elif key == ord('d'):
+        #    move_frame_count(+1)
         elif key == ord('w'):
             move_frame_count(+25)
         elif key == ord('s'):
@@ -272,6 +299,7 @@ def do_video(filepath: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     #parser.add_argument('-v', '--verb', action='store_true')
+    parser.add_argument('--debug', action='store_true')
     parser.add_argument('-p', '--path', type=str, default="./",
                         help="select path to video files")
     parser.add_argument('-n', '--num', type=int, default=None,
@@ -279,7 +307,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # the 10 videos
-
     files = [
         '23092021_07_45_57_2000HZ_muxa.mp4',
         '23092021_08_01_22_2000HZ_muxa.mp4',
@@ -303,5 +330,6 @@ if __name__ == "__main__":
         raise RuntimeError("[E] file {filepath} not available. check --path option")
 
 
-    do_video(filepath)
+
+    do_video(filepath, args.debug)
     # To-do: loop through multiple files -> more efficient
