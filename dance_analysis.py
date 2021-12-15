@@ -157,6 +157,16 @@ def do_video():
     current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
     assert current_frame == 0
 
+    def save_min_max_candidate(frame, x, y):
+        nonlocal min_max_candidates
+
+        try:
+            index = do_video.bee_pos_frames.index(frame)
+            min_max_candidates[index] = (x, y)
+        except ValueError:
+            min_max_candidates.append((x, y))
+            do_video.bee_pos_frames.append(frame)
+
     do_video.actuator_positions = []
     do_video.actuators = []
 
@@ -203,13 +213,11 @@ def do_video():
             def current_bee_position(event, x, y, flags, frame):
                 nonlocal min_max_candidates
                 if event == cv2.EVENT_FLAG_RBUTTON:  # right click
-                    min_max_candidates.append([x, y])
-                    do_video.bee_pos_frames.append(current_frame)
+                    save_min_max_candidate(current_frame, x, y)
                 elif event == cv2.EVENT_LBUTTONDBLCLK and not stop_position:  # double click
                     stop_position.append((x, y))
-                    min_max_candidates.append([x, y])  # since stop position can also be a min or max distance
                     do_video.stopping_frame = current_frame
-                    do_video.bee_pos_frames.append(current_frame)
+                    save_min_max_candidate(current_frame, x, y)
                 
             cv2.setMouseCallback("Frame", current_bee_position, frame)
             cv2.imshow("Frame", frame)
