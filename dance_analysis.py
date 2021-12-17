@@ -20,6 +20,35 @@ import argparse, sys, os.path
 # global, for skip forward/back
 FPS = 30
 
+def get_output_filename(filepath):
+    # Currently the output filename is independent of the video filepath.
+    return "data_analysis_23092021.csv"
+
+def load_old_annotations(filepath):
+
+    import ast
+    import pandas
+    import pathlib
+    import itertools
+    from collections import defaultdict
+
+    old_annotations_df = pandas.read_csv(get_output_filename(filepath))
+    def to_leaf_name(path):
+        return pathlib.Path(path).name
+    old_annotations_df = old_annotations_df[old_annotations_df["video name"].apply(to_leaf_name) == to_leaf_name(filepath)]
+    
+    old_annotations = defaultdict(list)
+
+    for key, header_name in (("stop_position", "stop coordinate"),
+                                ("min_max_candidates", "marked bee positions"),
+                                (("min_max_frames", "bee position timestamps"))):
+        for values in old_annotations_df[[header_name]].itertuples(index=False):
+            values = map(ast.literal_eval, values)
+            values = list(itertools.chain(*values))
+            old_annotations[key].extend(values)
+    
+    return old_annotations
+
 def draw_template(img, cap, current_actuator, filepath):
 
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -38,14 +67,18 @@ def draw_template(img, cap, current_actuator, filepath):
     return img
 
 
-def draw_bee_positions(img, min_max_candidates, stop_position, min_max_frames, current_frame):
+def draw_bee_positions(img, min_max_candidates, stop_position, min_max_frames, current_frame, is_old_annotations=False):
+
+    colormap = dict(markers=(0, 255, 0), stop_position=(0, 0, 255))
+    if is_old_annotations:
+        colormap = dict(markers=(200, 200, 200), stop_position=(200, 200, 255))
 
     for (xy, frame) in zip(min_max_candidates, min_max_frames):
         radius = 5 if current_frame != frame else 10
-        img = cv2.circle(img, (xy[0], xy[1]), radius, (0, 255, 0), 2)
+        img = cv2.circle(img, (xy[0], xy[1]), radius, colormap["markers"], 2)
 
     if stop_position:
-        img = cv2.circle(img, stop_position[0], 15, (0, 0, 255), 2)
+        img = cv2.circle(img, stop_position[0], 15, colormap["stop_position"], 2)
     return img
 
 
@@ -121,8 +154,9 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
     header = ['video name', 'activated actuator', 'min/max distances', 'stop coordinate', 'stop time', 'marked bee positions', 'bee position timestamps']
     data = [filepath, do_video.actuators[mux_index], min_max, stop_position, do_video.stopping_frame, min_max_candidates, do_video.bee_pos_frames]
 
+    output_filepath = get_output_filename(filepath)
     try:
-        file = open('data_analysis_23092021.csv', "x", newline='')
+        file = open(output_filepath, "x", newline='')
         writer = csv.writer(file)
         writer.writerow(header)
         file.close()
@@ -131,7 +165,7 @@ def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
             raise
         pass
     finally:
-        with open("data_analysis_23092021.csv", "a", newline='') as file:
+        with open(output_filepath, "a", newline='') as file:
             writer = csv.writer(file)
             writer.writerow(data)
 
@@ -165,6 +199,12 @@ def do_video(filepath: str, debug: bool = False):
     # filepath = "30092021_12_01_02_2000HZ_mux7.mp4"
     # filepath = "24092021_08_20_20_2000HZ_mux0.mp4"
 
+    # Try to read in old annotated data for this video, but don't fail fatally if anything happens.
+    try:
+        old_annotations = load_old_annotations(filepath)
+    except Exception as e:
+        print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
+        old_annotations = None
 
     min_max_candidates = []
     stop_position = []
@@ -231,6 +271,9 @@ def do_video(filepath: str, debug: bool = False):
 
         frame = draw_template(frame, cap, current_actuator, filepath)
         frame = draw_bee_positions(frame, min_max_candidates, stop_position, do_video.bee_pos_frames, current_frame)
+        if old_annotations:
+            frame = draw_bee_positions(frame, current_frame=current_frame, is_old_annotations=True, **old_annotations)
+
         cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
 
         if speed_fps <= 0 or is_in_pause_mode:
