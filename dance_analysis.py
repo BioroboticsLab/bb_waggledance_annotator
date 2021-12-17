@@ -271,7 +271,10 @@ def do_video(filepath: str, debug: bool = False):
             move_frame_count(-150)
         elif key == ord('6'):  # fast forward ~5 seconds
             move_frame_count(+150)
-
+        elif key == ord("+"):
+            cv2.setTrackbarPos("Speed", "Frame", min((speed_fps // 10) * 10 + 10, 60))
+        elif key == ord("-"):
+            cv2.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
         def current_bee_position(event, x, y, flags, frame):
             nonlocal min_max_candidates
             nonlocal stop_position
