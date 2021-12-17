@@ -251,8 +251,28 @@ def do_video(filepath: str, debug: bool = False):
         # Clear current raw frame so we fetch a new one even if in pause mode.
         original_frame_image = None
 
+    # Set up mouse interaction callback.
+    def store_current_bee_position(event, x, y, flags, user_data):
+        nonlocal min_max_candidates
+        nonlocal stop_position
+        nonlocal current_frame
+
+        if event == cv2.EVENT_FLAG_RBUTTON:  # right click
+            save_min_max_candidate(current_frame, x, y)
+        elif event == cv2.EVENT_LBUTTONDBLCLK:  # double click
+            stop_position = [(x, y)]
+            do_video.stopping_frame = current_frame
+            save_min_max_candidate(current_frame, x, y)
+
+    cv2.setMouseCallback("Frame", store_current_bee_position)
+
     while current_frame + 8 < total_frames:  # +8 for "error while decoding MB 57 57, bytestream -8"
-        speed_fps = cv2.getTrackbarPos("Speed", "Frame")
+        try:
+            speed_fps = cv2.getTrackbarPos("Speed", "Frame")
+        except:
+            # Might fail when window is already deconstructed.
+            # But then, the application is being terminated anyway.
+            break
         has_valid_frame = True
 
         # Fetch a new frame if either the speed is > 0 or we are not currently pausing the video playback.
@@ -318,17 +338,7 @@ def do_video(filepath: str, debug: bool = False):
             cv2.setTrackbarPos("Speed", "Frame", min((speed_fps // 10) * 10 + 10, 60))
         elif key == ord("-"):
             cv2.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
-        def current_bee_position(event, x, y, flags, frame):
-            nonlocal min_max_candidates
-            nonlocal stop_position
-            if event == cv2.EVENT_FLAG_RBUTTON:  # right click
-                save_min_max_candidate(current_frame, x, y)
-            elif event == cv2.EVENT_LBUTTONDBLCLK:  # double click
-                stop_position = [(x, y)]
-                do_video.stopping_frame = current_frame
-                save_min_max_candidate(current_frame, x, y)
-
-        cv2.setMouseCallback("Frame", current_bee_position, frame)
+        
         cv2.imshow("Frame", frame)
 
     min_max = []
