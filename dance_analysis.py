@@ -340,7 +340,8 @@ def do_video(filepath: str, debug: bool = False):
                 is_in_pause_mode = False
             annotations.update_waggle_direction(current_frame, x, y)
 
-
+    # Manually create the window with a flag that should disable right-click context menu.
+    cv2.namedWindow("Frame", cv2.WINDOW_GUI_NORMAL)
     cv2.setMouseCallback("Frame", on_mouse_event)
 
     while current_frame + 8 < total_frames:  # +8 for "error while decoding MB 57 57, bytestream -8"
