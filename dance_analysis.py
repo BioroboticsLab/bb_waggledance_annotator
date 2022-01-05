@@ -1,6 +1,9 @@
 import cv2
+import dataclasses
+import pandas
 import re
 import math
+import numpy as np
 import csv
 import errno
 
@@ -24,30 +27,114 @@ def get_output_filename(filepath):
     # Currently the output filename is independent of the video filepath.
     return "data_analysis_23092021.csv"
 
-def load_old_annotations(filepath):
+@dataclasses.dataclass
+class AnnotatedPosition:
+    frame: int
+    x: int
+    y: int
 
-    import ast
-    import pandas
-    import pathlib
-    import itertools
-    from collections import defaultdict
+    # Angle is annotated in vector notation in the same coordinate system as the x,y coordinates.
+    # This hopefully will prevent some confusion about the origin of an angle in image coordinates.
+    u: float = np.nan
+    v: float = np.nan
 
-    old_annotations_df = pandas.read_csv(get_output_filename(filepath))
-    def to_leaf_name(path):
-        return pathlib.Path(path).name
-    old_annotations_df = old_annotations_df[old_annotations_df["video name"].apply(to_leaf_name) == to_leaf_name(filepath)]
+class Annotations:
+
+    @staticmethod
+    def get_annotation_index_for_frame(list, frame):
+        index = [idx for idx, position in enumerate(list) if position.frame == frame]
+        assert len(index) < 2
+        if len(index) == 0:
+            return None
+        return index[0]
+
+    def __init__(self):
+        self.raw_thorax_positions = []
+        self.waggle_starts = []
+
+    def update_thorax_position(self, frame, x, y):
+        existing_index = Annotations.get_annotation_index_for_frame(self.raw_thorax_positions, frame)
+        if existing_index is not None:
+            self.raw_thorax_positions[existing_index].x = x
+            self.raw_thorax_positions[existing_index].y = y
+        else:
+            self.raw_thorax_positions.append(AnnotatedPosition(frame, x, y))
+
+    def update_waggle_start(self, frame, x, y, u=np.nan, v=np.nan):
+        existing_index = Annotations.get_annotation_index_for_frame(self.waggle_starts, frame)
+        if existing_index is not None:
+            self.waggle_starts[existing_index].x = x
+            self.waggle_starts[existing_index].y = y
+            if not pandas.isnull(u):
+                self.waggle_starts[existing_index].u = u
+                self.waggle_starts[existing_index].v = v
+        else:
+            self.waggle_starts.append(AnnotatedPosition(frame, x, y, u, v))
+
+    def update_waggle_direction(self, frame, to_x, to_y):
+        existing_index = Annotations.get_annotation_index_for_frame(self.waggle_starts, frame)
+        if existing_index is None:
+            return
+        self.waggle_starts[existing_index].u = to_x - self.waggle_starts[existing_index].x
+        self.waggle_starts[existing_index].v = to_y - self.waggle_starts[existing_index].y
+        
+
+    def clear(self):
+        self.__init__()
+
+    def calculate_min_max_thorax_distance_to_actuator(self, actuator):
+        if len(self.raw_thorax_positions) == 0 or not actuator:
+            return None
+        actuator = np.array(actuator)
+        thorax_xy = np.array([(p.x, p.y) for p in self.raw_thorax_positions])
+        distances = np.linalg.norm(thorax_xy - actuator, axis=1)
+        return np.around(distances.min(), decimals=2), np.around(distances.max(), decimals=2)
+
+    @staticmethod
+    def load(filepath):
+
+        def parse_string_list(values):
+            if isinstance(values, list):
+                values = map(ast.literal_eval, values)
+                values = list(itertools.chain(*values))
+            else:
+                values = ast.literal_eval(values)
+            return values
+
+        # Try to read in old annotated data for this video, but don't fail fatally if anything happens.
+        try:
+            annotations = Annotations()
+            
+            import ast
+            import pathlib
+            import itertools
+            from collections import defaultdict
+
+            annotations_df = pandas.read_csv(get_output_filename(filepath))
+            def to_leaf_name(path):
+                return pathlib.Path(path).name
+            annotations_df = annotations_df[annotations_df["video name"].apply(to_leaf_name) == to_leaf_name(filepath)]
+            
+            for all_xy, all_frames in annotations_df[["marked bee positions", "bee position timestamps"]].itertuples(index=False):
+                all_xy = parse_string_list(all_xy)
+                all_frames = parse_string_list(all_frames)
+
+                for (xy, frame) in zip(all_xy, all_frames):
+                    annotations.update_thorax_position(frame, xy[0], xy[1])
+
+            for all_xy, all_frames, all_uv in annotations_df[["waggle start positions", "waggle start timestamps", "waggle directions"]].itertuples(index=False):
+                all_xy = parse_string_list(all_xy)
+                all_uv = parse_string_list(all_uv)
+                all_frames = parse_string_list(all_frames)
+
+                for (xy, frame, uv) in zip(all_xy, all_frames, all_uv):
+                    annotations.update_waggle_start(frame, xy[0], xy[1], uv[0], uv[1])
+
+            return annotations
+        except Exception as e:
+            print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
+            return None
     
-    old_annotations = defaultdict(list)
-
-    for key, header_name in (("stop_position", "stop coordinate"),
-                                ("min_max_candidates", "marked bee positions"),
-                                (("min_max_frames", "bee position timestamps"))):
-        for values in old_annotations_df[[header_name]].itertuples(index=False):
-            values = map(ast.literal_eval, values)
-            values = list(itertools.chain(*values))
-            old_annotations[key].extend(values)
-    
-    return old_annotations
 
 def draw_template(img, cap, current_actuator, filepath):
 
@@ -67,18 +154,31 @@ def draw_template(img, cap, current_actuator, filepath):
     return img
 
 
-def draw_bee_positions(img, min_max_candidates, stop_position, min_max_frames, current_frame, is_old_annotations=False):
+def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False):
 
-    colormap = dict(markers=(0, 255, 0), stop_position=(0, 0, 255))
+    colormap = dict(thorax_position=(0, 255, 0), waggle_start=(0, 255, 255))
     if is_old_annotations:
-        colormap = dict(markers=(200, 200, 200), stop_position=(200, 200, 255))
+        colormap = dict(thorax_position=(200, 200, 200), waggle_start=(200, 255, 255))
 
-    for (xy, frame) in zip(min_max_candidates, min_max_frames):
-        radius = 5 if current_frame != frame else 10
-        img = cv2.circle(img, (xy[0], xy[1]), radius, colormap["markers"], 2)
+    for position in annotations.raw_thorax_positions:
+        radius = 5 if current_frame != position.frame else 10
+        img = cv2.circle(img, (position.x, position.y), radius, colormap["thorax_position"], 2)
 
-    if stop_position:
-        img = cv2.circle(img, stop_position[0], 15, colormap["stop_position"], 2)
+    for position in annotations.waggle_starts:
+        radius = 2 if current_frame != position.frame else 5
+        length = 25 if current_frame != position.frame else 50
+        img = cv2.circle(img, (position.x, position.y), radius, colormap["waggle_start"], 2)
+        
+        if not pandas.isnull(position.u):
+            direction = np.array([position.u, position.v])
+            direction = (direction / np.linalg.norm(direction)) * length
+            direction = direction.astype(int)
+
+            img = cv2.arrowedLine(img,
+                (position.x - direction[0], position.y - direction[1]),
+                (position.x + direction[0], position.y + direction[1]),
+                colormap["waggle_start"], thickness=1)
+
     return img
 
 
@@ -118,41 +218,25 @@ def calculate_time(cap):
     do_video.current_time = round(frame_timestamp_msec / 1000, 2)
 
 
-def calculate_distance(bee_coord, current_actuator):
-    # euclidian distance formula: sqrt((x2 - x1)² + (y2 - y1)²)
-    distance = math.sqrt((current_actuator[0][0] - bee_coord[0])**2 + (current_actuator[0][1] - bee_coord[1])**2)
-    return distance
+def output_data(annotations : Annotations, min_max, filepath, mux_index):
 
-
-def calculate_min_max(min_max_candidates, current_actuator):
-    min_max_distances = []
-
-    max_distance = 0
-    min_distance = 1000000  # arbitrary large number
-
-    for i in range(len(min_max_candidates)):
-        distance = calculate_distance(min_max_candidates[i], current_actuator)
-        if max_distance <= distance:
-            max_distance = distance
-        if min_distance >= distance:
-            min_distance = distance
-
-    min_max_distances.append([round(min_distance, 2), round(max_distance, 2)])
-
-    return min_max_distances
-
-
-def output_data(min_max_candidates, min_max, stop_position, filepath, mux_index):
-
-    print("marked bee positions: " + str(min_max_candidates))
-    print("bee position frames: " + str(do_video.bee_pos_frames))
-    print("stop coordinate: " + str(stop_position))
-    print("stop time: " + str(do_video.stopping_frame))
+    print("marked bee positions: " + str([(p.frame, p.x, p.y) for p in annotations.raw_thorax_positions]))
     print("min/max distances to actuator: " + str(min_max))
 
     # write to csv
-    header = ['video name', 'activated actuator', 'min/max distances', 'stop coordinate', 'stop time', 'marked bee positions', 'bee position timestamps']
-    data = [filepath, do_video.actuators[mux_index], min_max, stop_position, do_video.stopping_frame, min_max_candidates, do_video.bee_pos_frames]
+    header = ['video name', 'activated actuator', 'min/max distances',
+            'marked bee positions', 'bee position timestamps',
+            "waggle start positions", "waggle start timestamps", "waggle directions"
+            ]
+    thorax_xy = [(p.x, p.y) for p in annotations.raw_thorax_positions]
+    thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
+    waggle_xy = [(p.x, p.y) for p in annotations.waggle_starts]
+    waggle_frames = [p.frame for p in annotations.waggle_starts]
+    waggle_directions = [(p.u, p.v) for p in annotations.waggle_starts]
+    data = [filepath, do_video.actuators[mux_index], min_max,
+            thorax_xy, thorax_frames,
+            waggle_xy, waggle_frames, waggle_directions
+            ]
 
     output_filepath = get_output_filename(filepath)
     try:
@@ -199,19 +283,11 @@ def do_video(filepath: str, debug: bool = False):
     # filepath = "30092021_12_01_02_2000HZ_mux7.mp4"
     # filepath = "24092021_08_20_20_2000HZ_mux0.mp4"
 
-    # Try to read in old annotated data for this video, but don't fail fatally if anything happens.
-    try:
-        old_annotations = load_old_annotations(filepath)
-    except Exception as e:
-        print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
-        old_annotations = None
 
-    min_max_candidates = []
-    stop_position = []
+    annotations = Annotations()
+    old_annotations = Annotations.load(filepath)
 
     do_video.current_time = 0 # Time for display purposes only.
-    do_video.stopping_frame = 0
-    do_video.bee_pos_frames = []
 
     cap = cv2.VideoCapture(filepath)
     total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -219,16 +295,7 @@ def do_video(filepath: str, debug: bool = False):
     current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
     assert current_frame == 0
     is_in_pause_mode = False
-
-    def save_min_max_candidate(frame, x, y):
-        nonlocal min_max_candidates
-
-        try:
-            index = do_video.bee_pos_frames.index(frame)
-            min_max_candidates[index] = (x, y)
-        except ValueError:
-            min_max_candidates.append((x, y))
-            do_video.bee_pos_frames.append(frame)
+    is_in_draw_vector_mode = False
 
     do_video.actuator_positions = []
     do_video.actuators = []
@@ -252,19 +319,29 @@ def do_video(filepath: str, debug: bool = False):
         original_frame_image = None
 
     # Set up mouse interaction callback.
-    def store_current_bee_position(event, x, y, flags, user_data):
-        nonlocal min_max_candidates
-        nonlocal stop_position
-        nonlocal current_frame
+    def on_mouse_event(event, x, y, flags, user_data):
+        nonlocal current_frame, is_in_draw_vector_mode, is_in_pause_mode
 
         if event == cv2.EVENT_FLAG_RBUTTON:  # right click
-            save_min_max_candidate(current_frame, x, y)
-        elif event == cv2.EVENT_LBUTTONDBLCLK:  # double click
-            stop_position = [(x, y)]
-            do_video.stopping_frame = current_frame
-            save_min_max_candidate(current_frame, x, y)
+            annotations.update_thorax_position(current_frame, x, y)
+        elif event == cv2.EVENT_LBUTTONDOWN:  # double click
+            annotations.update_waggle_start(current_frame, x, y)
+            is_in_draw_vector_mode = True
+            # Force pause for drawing. Otherwise, the updates might affect the wrong arrow.
+            if not is_in_pause_mode:
+                # Additional marker to True/False for "forced pause".
+                is_in_pause_mode = 2
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if is_in_draw_vector_mode:
+                annotations.update_waggle_direction(current_frame, x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            is_in_draw_vector_mode = False
+            if is_in_pause_mode == 2:
+                is_in_pause_mode = False
+            annotations.update_waggle_direction(current_frame, x, y)
 
-    cv2.setMouseCallback("Frame", store_current_bee_position)
+
+    cv2.setMouseCallback("Frame", on_mouse_event)
 
     while current_frame + 8 < total_frames:  # +8 for "error while decoding MB 57 57, bytestream -8"
         try:
@@ -290,9 +367,9 @@ def do_video(filepath: str, debug: bool = False):
         do_video.height = int(cap.get(4))
 
         frame = draw_template(frame, cap, current_actuator, filepath)
-        frame = draw_bee_positions(frame, min_max_candidates, stop_position, do_video.bee_pos_frames, current_frame)
+        frame = draw_bee_positions(frame, annotations, current_frame=current_frame)
         if old_annotations:
-            frame = draw_bee_positions(frame, current_frame=current_frame, is_old_annotations=True, **old_annotations)
+            frame = draw_bee_positions(frame, old_annotations, current_frame=current_frame, is_old_annotations=True)
 
         cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
 
@@ -314,10 +391,7 @@ def do_video(filepath: str, debug: bool = False):
             is_in_pause_mode = not is_in_pause_mode
         elif key == ord('r'):  # press r to restart video (and delete bee/stop positions)
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            min_max_candidates.clear()
-            stop_position.clear()
-            do_video.stopping_time = 0
-            do_video.bee_pos_frames.clear()
+            annotations.clear()
         elif key in [ord('a'), ord('A'), 0x51]: # 0x51 is left arrow
             move_frame_count(-nframes)
         elif key in [ord('d'), ord('D'), 0x53]:  # 0x53 is right arrow (weird, should be 37-40 LURD)
@@ -341,15 +415,15 @@ def do_video(filepath: str, debug: bool = False):
         
         cv2.imshow("Frame", frame)
 
-    min_max = []
-    if min_max_candidates and current_actuator[0]:
-        min_max = calculate_min_max(min_max_candidates, current_actuator)
+    min_max = annotations.calculate_min_max_thorax_distance_to_actuator(current_actuator[0]) if len(current_actuator) > 0 else None
 
     cap.release()
     cv2.destroyAllWindows()
 
     # store dataset in file
-    output_data(min_max_candidates, min_max, stop_position, filepath, mux_index)
+    output_data(annotations,
+        min_max,
+        filepath, mux_index)
 
 
 if __name__ == "__main__":
