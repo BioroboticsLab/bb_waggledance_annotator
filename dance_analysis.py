@@ -75,8 +75,16 @@ class Annotations:
         existing_index = Annotations.get_annotation_index_for_frame(self.waggle_starts, frame)
         if existing_index is None:
             return
-        self.waggle_starts[existing_index].u = to_x - self.waggle_starts[existing_index].x
-        self.waggle_starts[existing_index].v = to_y - self.waggle_starts[existing_index].y
+        direction = np.array([to_x - self.waggle_starts[existing_index].x, to_y - self.waggle_starts[existing_index].y], dtype=np.float64)
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm > 0.0:
+            direction /= direction_norm
+
+            self.waggle_starts[existing_index].u = direction[0]
+            self.waggle_starts[existing_index].v = direction[1]
+        else:
+            self.waggle_starts[existing_index].u = np.nan
+            self.waggle_starts[existing_index].v = np.nan
         
 
     def clear(self):
