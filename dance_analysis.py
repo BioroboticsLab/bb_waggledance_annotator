@@ -164,13 +164,29 @@ def draw_template(img, cap, current_actuator, filepath):
 
 def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False):
 
-    colormap = dict(thorax_position=(0, 255, 0), waggle_start=(0, 255, 255))
+    colormap = dict(thorax_position=(0, 255, 0),
+                    thorax_position_100_frames=(0, 0, 255),
+                    waggle_start=(0, 255, 255))
     if is_old_annotations:
-        colormap = dict(thorax_position=(200, 200, 200), waggle_start=(200, 255, 255))
+        colormap = dict(thorax_position=(200, 200, 200),
+                        thorax_position_100_frames=(200, 200, 255),
+                        waggle_start=(200, 255, 255))
+    
+    if annotations.raw_thorax_positions:
+        last_marker_frame = max([p.frame for p in annotations.raw_thorax_positions])
 
     for position in annotations.raw_thorax_positions:
         radius = 5 if current_frame != position.frame else 10
         img = cv2.circle(img, (position.x, position.y), radius, colormap["thorax_position"], 2)
+
+        # We want to mark the bee 100 frames after the last thorax marking,
+        # so highlight the last one at the 100 frames mark.
+        if position.frame == last_marker_frame and current_frame > position.frame:
+            size = radius
+            if position.frame == current_frame - 100:
+                size = radius * 6
+            img = cv2.drawMarker(img, (position.x, position.y), colormap["thorax_position_100_frames"],
+                        markerType=cv2.MARKER_STAR, markerSize=size)
 
     for position in annotations.waggle_starts:
         radius = 2 if current_frame != position.frame else 5
