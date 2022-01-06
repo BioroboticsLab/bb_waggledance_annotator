@@ -2,7 +2,7 @@ import cv2
 import dataclasses
 import pandas
 import re
-import math
+# import math
 import numpy as np
 import csv
 import errno
@@ -23,9 +23,11 @@ import argparse, sys, os.path
 # global, for skip forward/back
 FPS = 30
 
+
 def get_output_filename(filepath):
     # Currently the output filename is independent of the video filepath.
     return "data_analysis_23092021.csv"
+
 
 @dataclasses.dataclass
 class AnnotatedPosition:
@@ -37,6 +39,7 @@ class AnnotatedPosition:
     # This hopefully will prevent some confusion about the origin of an angle in image coordinates.
     u: float = np.nan
     v: float = np.nan
+
 
 class Annotations:
 
@@ -75,7 +78,9 @@ class Annotations:
         existing_index = Annotations.get_annotation_index_for_frame(self.waggle_starts, frame)
         if existing_index is None:
             return
-        direction = np.array([to_x - self.waggle_starts[existing_index].x, to_y - self.waggle_starts[existing_index].y], dtype=np.float64)
+        direction = np.array([to_x - self.waggle_starts[existing_index].x,
+                              to_y - self.waggle_starts[existing_index].y],
+                             dtype=np.float64)
         direction_norm = np.linalg.norm(direction)
         if direction_norm > 0.0:
             direction /= direction_norm
@@ -85,7 +90,6 @@ class Annotations:
         else:
             self.waggle_starts[existing_index].u = np.nan
             self.waggle_starts[existing_index].v = np.nan
-        
 
     def clear(self):
         self.__init__()
@@ -112,17 +116,18 @@ class Annotations:
         # Try to read in old annotated data for this video, but don't fail fatally if anything happens.
         try:
             annotations = Annotations()
-            
+
             import ast
             import pathlib
             import itertools
-            from collections import defaultdict
+            # from collections import defaultdict
 
             annotations_df = pandas.read_csv(get_output_filename(filepath))
+
             def to_leaf_name(path):
                 return pathlib.Path(path).name
             annotations_df = annotations_df[annotations_df["video name"].apply(to_leaf_name) == to_leaf_name(filepath)]
-            
+
             for all_xy, all_frames in annotations_df[["marked bee positions", "bee position timestamps"]].itertuples(index=False):
                 all_xy = parse_string_list(all_xy)
                 all_frames = parse_string_list(all_frames)
@@ -142,7 +147,7 @@ class Annotations:
         except Exception as e:
             print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
             return None
-    
+
 
 def draw_template(img, cap, current_actuator, filepath):
 
@@ -157,7 +162,8 @@ def draw_template(img, cap, current_actuator, filepath):
     #     img = cv2.circle(img, (current_actuator[0][0], current_actuator[0][1]), 10, (255, 0, 0), 5) # mark activated actuator
 
     calculate_time(cap)
-    img = cv2.putText(img, "time in seconds: " + str(do_video.current_time), (20, do_video.height - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
+    img = cv2.putText(img, "time in seconds: " + str(do_video.current_time),
+                      (20, do_video.height - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
 
     return img
 
@@ -171,7 +177,7 @@ def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False
         colormap = dict(thorax_position=(200, 200, 200),
                         thorax_position_100_frames=(200, 200, 255),
                         waggle_start=(200, 255, 255))
-    
+
     if annotations.raw_thorax_positions:
         last_marker_frame = max([p.frame for p in annotations.raw_thorax_positions])
 
@@ -185,20 +191,22 @@ def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False
             size = radius
             if position.frame == current_frame - 100:
                 size = radius * 6
-            img = cv2.drawMarker(img, (position.x, position.y), colormap["thorax_position_100_frames"],
-                        markerType=cv2.MARKER_STAR, markerSize=size)
+            img = cv2.drawMarker(img, (position.x, position.y),
+                                 colormap["thorax_position_100_frames"],
+                                 markerType=cv2.MARKER_STAR, markerSize=size)
 
     for position in annotations.waggle_starts:
         radius = 2 if current_frame != position.frame else 5
         length = 25 if current_frame != position.frame else 50
         img = cv2.circle(img, (position.x, position.y), radius, colormap["waggle_start"], 2)
-        
+
         if not pandas.isnull(position.u):
             direction = np.array([position.u, position.v])
             direction = (direction / np.linalg.norm(direction)) * length
             direction = direction.astype(int)
 
-            img = cv2.arrowedLine(img,
+            img = cv2.arrowedLine(
+                img,
                 (position.x - direction[0], position.y - direction[1]),
                 (position.x + direction[0], position.y + direction[1]),
                 colormap["waggle_start"], thickness=1)
@@ -207,11 +215,17 @@ def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False
 
 
 def define_actuator_positions(filepath):
-    #do_video.actuator_positions = [[1491, 311], [1114, 300], [719, 294], [314, 297], [296, 653], [716, 636], [1112, 632], [1506, 635]] # wrong order
-    do_video.actuator_positions = [[1506, 635], [1112, 632], [716, 636], [296, 653], [314, 297], [719, 294], [1114, 300], [1491, 311]]
+    # do_video.actuator_positions = [
+    #     [1491, 311], [1114, 300], [719, 294], [314, 297],
+    #     [296, 653], [716, 636], [1112, 632], [1506, 635]] # wrong order
+    do_video.actuator_positions = [
+        [1506, 635], [1112, 632], [716, 636], [296, 653],
+        [314, 297], [719, 294], [1114, 300], [1491, 311]
+    ]
     # preliminary
 
-    do_video.actuators = ["mux0", "mux1", "mux2", "mux3", "mux4", "mux5", "mux6", "mux7", "muxa"]
+    do_video.actuators = ["mux0", "mux1", "mux2", "mux3", "mux4",
+                          "mux5", "mux6", "mux7", "muxa"]
 
     for i in range(len(do_video.actuators)):
         if re.search(do_video.actuators[i], filepath):
@@ -242,16 +256,16 @@ def calculate_time(cap):
     do_video.current_time = round(frame_timestamp_msec / 1000, 2)
 
 
-def output_data(annotations : Annotations, min_max, filepath, mux_index):
+def output_data(annotations: Annotations, min_max, filepath, mux_index):
 
     print("marked bee positions: " + str([(p.frame, p.x, p.y) for p in annotations.raw_thorax_positions]))
     print("min/max distances to actuator: " + str(min_max))
 
-    # write to csv
+    # Write to csv
     header = ['video name', 'activated actuator', 'min/max distances',
-            'marked bee positions', 'bee position timestamps',
-            "waggle start positions", "waggle start timestamps", "waggle directions"
-            ]
+              'marked bee positions', 'bee position timestamps',
+              'waggle start positions', 'waggle start timestamps', 'waggle directions'
+              ]
     thorax_xy = [(p.x, p.y) for p in annotations.raw_thorax_positions]
     thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
     waggle_xy = [(p.x, p.y) for p in annotations.waggle_starts]
@@ -277,22 +291,24 @@ def output_data(annotations : Annotations, min_max, filepath, mux_index):
             writer = csv.writer(file)
             writer.writerow(data)
 
+
 def calc_frames_to_move(k32: int, debug: bool = False) -> int:
     ''' from extended keycode, select nframes to advance or rewind.'''
     # hmm modifiers are actually 17, 19, 20 bits away
-    ctrl  = (k32 & (1<<18)) >> 18
-    shift = (k32 & (1<<16)) >> 16
-    alt   = (k32 & (1<<19)) >> 19
+    ctrl  = (k32 & (1 << 18)) >> 18
+    shift = (k32 & (1 << 16)) >> 16
+    alt   = (k32 & (1 << 19)) >> 19
     modifiers = f"{ctrl:0x} {shift:0x} {alt:0x}"
     if k32 != -1 and debug:
         key = k32 & 0xFF
-        print('\033[34m' + f"KEY: {k32} 0x{k32:2x} |{key} 0x{key:2x} |{modifiers}|" +  '\033[0m')
+        print('\033[34m' + f"KEY: {k32} 0x{k32:2x} |{key} 0x{key:2x} |{modifiers}|" + '\033[0m')
     nframes = 1
     if shift: nframes = int(FPS * 1)
     elif ctrl: nframes = int(FPS * 5)
     elif alt: nframes = int(5)
 
     return nframes
+
 
 def do_video(filepath: str, debug: bool = False):
     # the 10 videos
@@ -307,11 +323,10 @@ def do_video(filepath: str, debug: bool = False):
     # filepath = "30092021_12_01_02_2000HZ_mux7.mp4"
     # filepath = "24092021_08_20_20_2000HZ_mux0.mp4"
 
-
     annotations = Annotations()
     old_annotations = Annotations.load(filepath)
 
-    do_video.current_time = 0 # Time for display purposes only.
+    do_video.current_time = 0  # Time for display purposes only.
 
     cap = cv2.VideoCapture(filepath)
     total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -403,7 +418,7 @@ def do_video(filepath: str, debug: bool = False):
         else:
             delay_ms = max(1, int(1000 / speed_fps))
 
-        #key = cv2.waitKey(delay_ms)
+        # key = cv2.waitKey(delay_ms)
         k32 = cv2.waitKeyEx(delay_ms)
         key = k32 & 0xFF
 
@@ -416,14 +431,14 @@ def do_video(filepath: str, debug: bool = False):
         elif key == ord('r'):  # press r to restart video (and delete bee/stop positions)
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             annotations.clear()
-        elif key in [ord('a'), ord('A'), 0x51]: # 0x51 is left arrow
+        elif key in [ord('a'), ord('A'), 0x51]:  # 0x51 is left arrow
             move_frame_count(-nframes)
         elif key in [ord('d'), ord('D'), 0x53]:  # 0x53 is right arrow (weird, should be 37-40 LURD)
             move_frame_count(+nframes)
-        #elif key == ord('a'):
-        #    move_frame_count(-1)
-        #elif key == ord('d'):
-        #    move_frame_count(+1)
+        # elif key == ord('a'):
+        #     move_frame_count(-1)
+        # elif key == ord('d'):
+        #     move_frame_count(+1)
         elif key == ord('w'):
             move_frame_count(+25)
         elif key == ord('s'):
@@ -436,7 +451,7 @@ def do_video(filepath: str, debug: bool = False):
             cv2.setTrackbarPos("Speed", "Frame", min((speed_fps // 10) * 10 + 10, 60))
         elif key == ord("-"):
             cv2.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
-        
+
         cv2.imshow("Frame", frame)
 
     min_max = annotations.calculate_min_max_thorax_distance_to_actuator(current_actuator[0]) if len(current_actuator) > 0 else None
@@ -445,14 +460,12 @@ def do_video(filepath: str, debug: bool = False):
     cv2.destroyAllWindows()
 
     # store dataset in file
-    output_data(annotations,
-        min_max,
-        filepath, mux_index)
+    output_data(annotations, min_max, filepath, mux_index)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    #parser.add_argument('-v', '--verb', action='store_true')
+    # parser.add_argument('-v', '--verb', action='store_true')
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('-p', '--path', type=str, default="./",
                         help="select path to video files")
@@ -475,15 +488,13 @@ if __name__ == "__main__":
     if args.num is None or args.num < 0 or args.num > len(files):
         print(f"[E] we have {len(files)} files, pick one with -n <N>:")
         print("\n".join([f"  {i:3d}:  {f}" for i, f in enumerate(files)]))
-        sys.exit(1) # lazy exit
+        sys.exit(1)  # lazy exit
 
     vidfile = files[args.num]
     print(f"[I] index {args.num} -> file {vidfile}")
     filepath = os.path.join(args.path, vidfile)
     if not os.path.exists(filepath):
         raise RuntimeError("[E] file {filepath} not available. check --path option")
-
-
 
     do_video(filepath, args.debug)
     # To-do: loop through multiple files -> more efficient
