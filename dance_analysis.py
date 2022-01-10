@@ -37,8 +37,8 @@ class AnnotatedPosition:
 
     # Angle is annotated in vector notation in the same coordinate system as the x,y coordinates.
     # This hopefully will prevent some confusion about the origin of an angle in image coordinates.
-    u: float = np.nan
-    v: float = np.nan
+    u: float = 0.0
+    v: float = 0.0
 
 
 class Annotations:
@@ -88,8 +88,8 @@ class Annotations:
             self.waggle_starts[existing_index].u = direction[0]
             self.waggle_starts[existing_index].v = direction[1]
         else:
-            self.waggle_starts[existing_index].u = np.nan
-            self.waggle_starts[existing_index].v = np.nan
+            self.waggle_starts[existing_index].u = 0.0
+            self.waggle_starts[existing_index].v = 0.0
 
     def clear(self):
         self.__init__()
