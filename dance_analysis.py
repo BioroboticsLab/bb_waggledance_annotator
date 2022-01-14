@@ -351,6 +351,7 @@ def do_video(filepath: str, debug: bool = False):
     is_in_pause_mode = False
     is_in_draw_vector_mode = False
     hide_past_annotations = False
+    normalize_contrast = False
 
     do_video.actuator_positions = []
     do_video.actuators = []
@@ -421,6 +422,13 @@ def do_video(filepath: str, debug: bool = False):
         do_video.width = int(cap.get(3))
         do_video.height = int(cap.get(4))
 
+        if normalize_contrast:
+            # Use in-place operations for a slightly better performance.
+            np.subtract(frame, frame.min(), out=frame)
+            frame = frame.astype(np.float32)
+            np.divide(frame, frame.max() / 255.0, out=frame)
+            frame = frame.astype(np.uint8)
+
         frame = draw_template(frame, cap, current_actuator, filepath)
         frame = draw_bee_positions(frame, annotations, current_frame=current_frame, hide_past_annotations=hide_past_annotations)
         if old_annotations and not hide_past_annotations:
@@ -469,6 +477,8 @@ def do_video(filepath: str, debug: bool = False):
             cv2.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
         elif key == ord("h"):
             hide_past_annotations = not hide_past_annotations
+        elif key == ord("c"):
+            normalize_contrast = not normalize_contrast
 
         cv2.imshow("Frame", frame)
 
