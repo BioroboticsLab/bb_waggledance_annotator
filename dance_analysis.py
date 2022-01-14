@@ -168,7 +168,7 @@ def draw_template(img, cap, current_actuator, filepath):
     return img
 
 
-def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False):
+def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False, hide_past_annotations=False):
 
     colormap = dict(thorax_position=(0, 255, 0),
                     thorax_position_100_frames=(0, 0, 255),
@@ -182,12 +182,18 @@ def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False
         last_marker_frame = max([p.frame for p in annotations.raw_thorax_positions])
 
     for position in annotations.raw_thorax_positions:
-        radius = 5 if current_frame != position.frame else 10
+        is_last_marker = position.frame == last_marker_frame
+        is_in_current_frame = current_frame == position.frame
+
+        if (not is_last_marker and not is_in_current_frame) and hide_past_annotations:
+            continue
+
+        radius = 5 if not is_in_current_frame else 10
         img = cv2.circle(img, (position.x, position.y), radius, colormap["thorax_position"], 2)
 
         # We want to mark the bee 100 frames after the last thorax marking,
         # so highlight the last one at the 100 frames mark.
-        if position.frame == last_marker_frame and current_frame > position.frame:
+        if is_last_marker and current_frame > position.frame:
             size = radius
             if position.frame == current_frame - 100:
                 size = radius * 6
@@ -195,9 +201,18 @@ def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False
                                  colormap["thorax_position_100_frames"],
                                  markerType=cv2.MARKER_STAR, markerSize=size)
 
+    if annotations.waggle_starts:
+        last_waggle_start_frame = max([p.frame for p in annotations.waggle_starts])
+
     for position in annotations.waggle_starts:
-        radius = 2 if current_frame != position.frame else 5
-        length = 25 if current_frame != position.frame else 50
+        is_last_marker = position.frame == last_waggle_start_frame
+        is_in_current_frame = current_frame == position.frame
+
+        if (not is_last_marker and not is_in_current_frame) and hide_past_annotations:
+            continue
+
+        radius = 2 if not is_in_current_frame else 5
+        length = 25 if not is_in_current_frame else 50
         img = cv2.circle(img, (position.x, position.y), radius, colormap["waggle_start"], 2)
 
         if not pandas.isnull(position.u):
@@ -335,6 +350,7 @@ def do_video(filepath: str, debug: bool = False):
     assert current_frame == 0
     is_in_pause_mode = False
     is_in_draw_vector_mode = False
+    hide_past_annotations = False
 
     do_video.actuator_positions = []
     do_video.actuators = []
@@ -406,8 +422,8 @@ def do_video(filepath: str, debug: bool = False):
         do_video.height = int(cap.get(4))
 
         frame = draw_template(frame, cap, current_actuator, filepath)
-        frame = draw_bee_positions(frame, annotations, current_frame=current_frame)
-        if old_annotations:
+        frame = draw_bee_positions(frame, annotations, current_frame=current_frame, hide_past_annotations=hide_past_annotations)
+        if old_annotations and not hide_past_annotations:
             frame = draw_bee_positions(frame, old_annotations, current_frame=current_frame, is_old_annotations=True)
 
         cv2.setTrackbarPos("Frame", "Frame", int(current_frame))
@@ -451,6 +467,8 @@ def do_video(filepath: str, debug: bool = False):
             cv2.setTrackbarPos("Speed", "Frame", min((speed_fps // 10) * 10 + 10, 60))
         elif key == ord("-"):
             cv2.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
+        elif key == ord("h"):
+            hide_past_annotations = not hide_past_annotations
 
         cv2.imshow("Frame", frame)
 
