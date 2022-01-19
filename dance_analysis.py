@@ -215,7 +215,7 @@ def draw_bee_positions(img, annotations, current_frame, is_old_annotations=False
         length = 25 if not is_in_current_frame else 50
         img = cv2.circle(img, (position.x, position.y), radius, colormap["waggle_start"], 2)
 
-        if not pandas.isnull(position.u):
+        if not pandas.isnull(position.u) and not (np.abs(position.u) < 1e-4 and np.abs(position.v) < 1e-4):
             direction = np.array([position.u, position.v])
             direction = (direction / np.linalg.norm(direction)) * length
             direction = direction.astype(int)
