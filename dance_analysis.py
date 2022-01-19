@@ -28,6 +28,12 @@ def get_output_filename(filepath):
     # Currently the output filename is independent of the video filepath.
     return "data_analysis_23092021.csv"
 
+def get_csv_writer_options():
+    return dict(
+        quoting=csv.QUOTE_ALL,
+        quotechar='"',
+        delimiter=","
+    )
 
 @dataclasses.dataclass
 class AnnotatedPosition:
@@ -122,7 +128,7 @@ class Annotations:
             import itertools
             # from collections import defaultdict
 
-            annotations_df = pandas.read_csv(get_output_filename(filepath))
+            annotations_df = pandas.read_csv(get_output_filename(filepath), decimal=".", **get_csv_writer_options())
 
             def to_leaf_name(path):
                 return pathlib.Path(path).name
@@ -292,19 +298,14 @@ def output_data(annotations: Annotations, min_max, filepath, mux_index):
             ]
 
     output_filepath = get_output_filename(filepath)
-    try:
-        file = open(output_filepath, "x", newline='')
-        writer = csv.writer(file)
-        writer.writerow(header)
-        file.close()
-    except OSError as err:
-        if err.errno != errno.EEXIST:
-            raise
-        pass
-    finally:
-        with open(output_filepath, "a", newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(data)
+    is_first_entry = not os.path.exists(output_filepath)
+    
+    with open(output_filepath, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, **get_csv_writer_options())
+
+        if is_first_entry:
+            writer.writerow(header)
+        writer.writerow(data)
 
 
 def calc_frames_to_move(k32: int, debug: bool = False) -> int:
