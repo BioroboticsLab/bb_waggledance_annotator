@@ -115,6 +115,9 @@ class Annotations:
             frame = None
         return frame
 
+    def is_empty(self):
+        return self.get_maximum_annotated_frame_index() is None
+
     @staticmethod
     def load(filepath):
 
@@ -510,7 +513,10 @@ def do_video(filepath: str, debug: bool = False):
     cv2.destroyAllWindows()
 
     # store dataset in file
-    output_data(annotations, min_max, filepath, mux_index)
+    if not annotations.is_empty():
+        output_data(annotations, min_max, filepath, mux_index)
+    else:
+        print("No annotations to save.")
 
 
 if __name__ == "__main__":
