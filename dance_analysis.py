@@ -108,6 +108,13 @@ class Annotations:
         distances = np.linalg.norm(thorax_xy - actuator, axis=1)
         return np.around(distances.min(), decimals=2), np.around(distances.max(), decimals=2)
 
+    def get_maximum_annotated_frame_index(self):
+        try:
+            frame = max([max([a.frame for a in l]) for l in (self.waggle_starts, self.raw_thorax_positions) if l])
+        except:
+            frame = None
+        return frame
+
     @staticmethod
     def load(filepath):
 
@@ -368,13 +375,16 @@ def do_video(filepath: str, debug: bool = False):
 
     setup(cap)
 
-    def move_frame_count(offset):
+    def move_frame_count(offset, target_frame=None):
         nonlocal current_frame
         nonlocal cap
         nonlocal total_frames
         nonlocal original_frame_image
 
-        current_frame = min(max(current_frame + offset, 0), total_frames - 1)
+        if target_frame is None:
+            target_frame = current_frame + offset
+
+        current_frame = min(max(target_frame, 0), total_frames - 1)
         cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
         # Clear current raw frame so we fetch a new one even if in pause mode.
@@ -487,6 +497,10 @@ def do_video(filepath: str, debug: bool = False):
             normalize_contrast = not normalize_contrast
         elif key in (ord("x"), 8): # 8 is backspace.
             annotations.delete_annotations_on_frame(current_frame)
+        elif key == ord("f"):
+            max_frame = annotations.get_maximum_annotated_frame_index()
+            if max_frame is not None:
+                move_frame_count(offset=0, target_frame=max_frame)
 
         cv2.imshow("Frame", frame)
 
