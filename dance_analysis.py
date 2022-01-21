@@ -154,6 +154,11 @@ class Annotations:
             print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
             return None
 
+    def delete_annotations_on_frame(self, current_frame):
+        for l in (self.raw_thorax_positions, self.waggle_starts):
+            idx = Annotations.get_annotation_index_for_frame(l, current_frame)
+            if idx is not None:
+                del l[idx]
 
 def draw_template(img, cap, current_actuator, filepath):
 
@@ -480,6 +485,8 @@ def do_video(filepath: str, debug: bool = False):
             hide_past_annotations = not hide_past_annotations
         elif key == ord("c"):
             normalize_contrast = not normalize_contrast
+        elif key in (ord("x"), 8): # 8 is backspace.
+            annotations.delete_annotations_on_frame(current_frame)
 
         cv2.imshow("Frame", frame)
 
