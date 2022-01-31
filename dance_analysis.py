@@ -334,8 +334,11 @@ def define_actuator_positions(filepath):
     do_video.actuators = ["mux0", "mux1", "mux2", "mux3", "mux4",
                           "mux5", "mux6", "mux7", "muxa"]
 
+    current_actuator = "none"
+    index = -1
+
     for i in range(len(do_video.actuators)):
-        if re.search(do_video.actuators[i], filepath):
+        if re.search(do_video.actuators[i], filepath.lower()):
             if do_video.actuators[i] != "muxa":
                 current_actuator = do_video.actuator_positions[i]
                 index = i
