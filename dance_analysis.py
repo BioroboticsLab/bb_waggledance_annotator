@@ -241,7 +241,65 @@ class FileSelectorUI:
 
         self.table_frame.mainloop()
 
-def draw_template(img, cap, current_actuator, filepath):
+class VideoCaptureCache():
+    def __init__(self, capture, cache_size=FPS * 3, verbose=False):
+        
+        self.verbose = verbose
+        self.capture = capture
+        self.cache_size = cache_size
+        self.cache = dict()
+        self.key_queue = []
+        self.age_counter = 0
+        self.current_frame = int(self.capture.get(cv2.CAP_PROP_POS_FRAMES))
+        self.last_read_frame = -1
+
+    def delete_oldest(self):
+        if len(self.cache) == 0:
+            return
+
+        _, oldest = sorted(list((age, key) for key, (age, _, _) in self.cache.items()))[0]
+        del self.cache[oldest]
+    
+    def ensure_max_cache_size(self):
+        if len(self.cache) > self.cache_size:
+            self.delete_oldest()
+
+    def get_current_frame(self):
+        return self.current_frame
+    
+    def set_current_frame(self, to_frame):
+        self.current_frame = to_frame
+
+    def read(self):
+        
+        valid, frame = None, None
+        
+        if self.current_frame in self.cache:
+            _, valid, frame = self.cache[self.current_frame]
+            if self.verbose:
+                print("Cache hit")
+        else:
+            if self.last_read_frame != self.current_frame - 1:
+                if self.verbose:
+                    print("Manual seek")
+                self.capture.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
+            self.last_read_frame = self.current_frame
+            valid, frame = self.capture.read()
+            if self.verbose:
+                print("Cache miss")
+
+        self.cache[self.current_frame] = self.age_counter, valid, frame
+
+        self.current_frame += 1
+        self.age_counter += 1
+
+        self.ensure_max_cache_size()
+
+        return valid, frame
+
+
+
+def draw_template(img, current_actuator, filepath, current_time=None):
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     img = cv2.putText(img, filepath, (600, do_video.height - 20), font, 1, (0, 0, 0), 1, cv2.LINE_AA)
@@ -253,8 +311,8 @@ def draw_template(img, cap, current_actuator, filepath):
     # if current_actuator[0]:
     #     img = cv2.circle(img, (current_actuator[0][0], current_actuator[0][1]), 10, (255, 0, 0), 5) # mark activated actuator
 
-    calculate_time(cap)
-    img = cv2.putText(img, "time in seconds: " + str(do_video.current_time),
+    if current_time is not None:
+        img = cv2.putText(img, "time in seconds: " + str(current_time),
                       (20, do_video.height - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
 
     return img
@@ -361,9 +419,9 @@ def setup(cap):
     cv2.createTrackbar("Frame", "Frame", 0, total_frames, nothing)
 
 
-def calculate_time(cap):
-    frame_timestamp_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-    do_video.current_time = round(frame_timestamp_msec / 1000, 2)
+def calculate_time(current_frame, video_fps):
+    frame_timestamp_sec = current_frame / video_fps
+    return round(frame_timestamp_sec, 2)
 
 
 def output_data(annotations: Annotations, min_max, filepath, mux_index):
@@ -431,12 +489,15 @@ def do_video(filepath: str, debug: bool = False):
     annotations = Annotations()
     old_annotations = Annotations.load(filepath)
 
-    do_video.current_time = 0  # Time for display purposes only.
-
     cap = cv2.VideoCapture(filepath)
+    capture_cache = VideoCaptureCache(cap)
+
     total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    video_reader_fps = cap.get(cv2.CAP_PROP_FPS)
+
     original_frame_image = None
-    current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+    current_frame = capture_cache.get_current_frame()
+
     assert current_frame == 0
     is_in_pause_mode = False
     is_in_draw_vector_mode = False
@@ -462,7 +523,7 @@ def do_video(filepath: str, debug: bool = False):
             target_frame = current_frame + offset
 
         current_frame = min(max(target_frame, 0), total_frames - 1)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+        capture_cache.set_current_frame(current_frame)
 
         # Clear current raw frame so we fetch a new one even if in pause mode.
         original_frame_image = None
@@ -505,8 +566,9 @@ def do_video(filepath: str, debug: bool = False):
         if (speed_fps > 0 and not is_in_pause_mode) or original_frame_image is None:
             # Make sure to read the current frame number only BEFORE fetching an image.
             # cap.read() will advance the frame number after reading.
-            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-            has_valid_frame, original_frame_image = cap.read()
+            current_frame = capture_cache.get_current_frame()
+            has_valid_frame, original_frame_image = capture_cache.read()
+
         frame = original_frame_image.copy()
 
         if not has_valid_frame:
@@ -522,7 +584,7 @@ def do_video(filepath: str, debug: bool = False):
             np.divide(frame, frame.max() / 255.0, out=frame)
             frame = frame.astype(np.uint8)
 
-        frame = draw_template(frame, cap, current_actuator, filepath)
+        frame = draw_template(frame, current_actuator, filepath, current_time=calculate_time(current_frame, video_reader_fps))
         frame = draw_bee_positions(frame, annotations, current_frame=current_frame, hide_past_annotations=hide_past_annotations)
         if old_annotations and not hide_past_annotations:
             frame = draw_bee_positions(frame, old_annotations, current_frame=current_frame, is_old_annotations=True)
@@ -546,7 +608,8 @@ def do_video(filepath: str, debug: bool = False):
         elif key == ord(' '):  # spacebar as pause button
             is_in_pause_mode = not is_in_pause_mode
         elif key == ord('r'):  # press r to restart video (and delete bee/stop positions)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            capture_cache.set_current_frame(0)
+            original_frame_image = None
             annotations.clear()
         elif key in [ord('a'), ord('A'), 0x51]:  # 0x51 is left arrow
             move_frame_count(-nframes)
