@@ -119,7 +119,7 @@ class Annotations:
         return self.get_maximum_annotated_frame_index() is None
 
     @staticmethod
-    def load(filepath):
+    def load(filepath, on_error="print"):
 
         def parse_string_list(values):
             if isinstance(values, list):
@@ -161,7 +161,10 @@ class Annotations:
 
             return annotations
         except Exception as e:
-            print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
+            if on_error == "print":
+                print("Could not read old annotations. Continuing normally. Error: {}".format(str(e)))
+            elif on_error == "raise":
+                raise
             return None
 
     def delete_annotations_on_frame(self, current_frame):
@@ -169,6 +172,74 @@ class Annotations:
             idx = Annotations.get_annotation_index_for_frame(l, current_frame)
             if idx is not None:
                 del l[idx]
+
+class FileSelectorUI:
+
+    def __init__(self, root_path, on_filepath_selected):
+        self.root_path = root_path
+        self.on_filepath_selected = on_filepath_selected
+
+    def collect_files(self):
+        import glob
+        import pathlib
+        all_files = glob.glob(os.path.join(self.root_path, "**/*.mp4"), recursive=True)
+
+        for filepath in all_files:
+            yield filepath, pathlib.Path(filepath).name
+
+    def edit_video_file(self, event):
+        row = self.pt.get_row_clicked(event)
+        raw_table = self.pt.model.df
+        idx = raw_table.index[row]
+        filepath = self.index_map[idx]
+
+        self.on_filepath_selected(filepath)
+
+        # Update row.
+        annotations = Annotations.load(filepath, on_error="silent")
+        if annotations is not None:
+            raw_table.at[idx, "n_waggle_starts"] = len(annotations.waggle_starts)
+            raw_table.at[idx, "n_thorax_points"] = len(annotations.raw_thorax_positions)
+            raw_table.at[idx, "last_annotated_frame"] = int(annotations.get_maximum_annotated_frame_index() or 0)
+        
+        self.pt.redraw()
+
+    def show(self):
+        
+        import tkinter as tk
+        import pandas as pd
+        import pandastable
+        
+        self.index_map = dict()
+
+        table = []
+        for idx, (filepath, filename) in enumerate(self.collect_files()):
+            self.index_map[idx] = filepath
+
+            annotations = Annotations.load(filepath, on_error="silent")
+            has_annotations = annotations is not None
+            metadata = dict(
+                index=idx,
+                filename=filename,
+                n_waggle_starts=len(annotations.waggle_starts) if has_annotations else 0,
+                n_thorax_points=len(annotations.raw_thorax_positions) if has_annotations else 0,
+                last_annotated_frame=int(annotations.get_maximum_annotated_frame_index() or 0) if has_annotations else 0
+            )
+
+            table.append(metadata)
+
+        table = pandas.DataFrame(table).sort_values("filename")
+        table.set_index("index", inplace=True)
+
+        self.root = tk.Tk()
+        self.root.title("Available videos")
+        self.table_frame = tk.Frame(self.root, width=800, height=600)
+        self.table_frame.pack(fill="x", expand=True)
+        self.pt = pandastable.Table(self.table_frame, dataframe=table, cellwidth=100, width=800)
+        self.pt.bind("<Double-Button-1>", self.edit_video_file)
+        self.pt.show()
+
+        self.table_frame.mainloop()
 
 def draw_template(img, cap, current_actuator, filepath):
 
@@ -525,32 +596,37 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('-p', '--path', type=str, default="./",
                         help="select path to video files")
-    parser.add_argument('-n', '--num', type=int, default=None,
+    parser.add_argument('-n', '--num', type=int, default=None, required=False,
                         help='select the video number to analyse')
     args = parser.parse_args()
 
-    # the 10 videos
-    files = [
-        '23092021_07_45_57_2000HZ_muxa.mp4',
-        '23092021_08_01_22_2000HZ_muxa.mp4',
-        '23092021_08_16_43_2000HZ_mux0.mp4',
-        '23092021_10_33_04_2000HZ_mux4.mp4',
-        '23092021_11_36_02_2000HZ_muxa.mp4',
-        '24092021_08_20_20_2000HZ_mux0.mp4',
-        '24092021_09_45_15_2000HZ_mux3.mp4',
-        '24092021_09_49_34_2000HZ_mux0.mp4',
-        '28092021_10_27_18_2000HZ_mux2.mp4',
-        '30092021_12_01_02_2000HZ_mux7.mp4']
-    if args.num is None or args.num < 0 or args.num > len(files):
-        print(f"[E] we have {len(files)} files, pick one with -n <N>:")
-        print("\n".join([f"  {i:3d}:  {f}" for i, f in enumerate(files)]))
-        sys.exit(1)  # lazy exit
+    if args.num is not None:
+        # the 10 videos
+        files = [
+            '23092021_07_45_57_2000HZ_muxa.mp4',
+            '23092021_08_01_22_2000HZ_muxa.mp4',
+            '23092021_08_16_43_2000HZ_mux0.mp4',
+            '23092021_10_33_04_2000HZ_mux4.mp4',
+            '23092021_11_36_02_2000HZ_muxa.mp4',
+            '24092021_08_20_20_2000HZ_mux0.mp4',
+            '24092021_09_45_15_2000HZ_mux3.mp4',
+            '24092021_09_49_34_2000HZ_mux0.mp4',
+            '28092021_10_27_18_2000HZ_mux2.mp4',
+            '30092021_12_01_02_2000HZ_mux7.mp4']
+        if args.num is None or args.num < 0 or args.num > len(files):
+            print(f"[E] we have {len(files)} files, pick one with -n <N>:")
+            print("\n".join([f"  {i:3d}:  {f}" for i, f in enumerate(files)]))
+            sys.exit(1)  # lazy exit
 
-    vidfile = files[args.num]
-    print(f"[I] index {args.num} -> file {vidfile}")
-    filepath = os.path.join(args.path, vidfile)
-    if not os.path.exists(filepath):
-        raise RuntimeError("[E] file {filepath} not available. check --path option")
+        vidfile = files[args.num]
+        print(f"[I] index {args.num} -> file {vidfile}")
+        filepath = os.path.join(args.path, vidfile)
+        if not os.path.exists(filepath):
+            raise RuntimeError("[E] file {filepath} not available. check --path option")
 
-    do_video(filepath, args.debug)
-    # To-do: loop through multiple files -> more efficient
+        do_video(filepath, args.debug)
+    else:
+        
+        ui = FileSelectorUI(args.path, on_filepath_selected=lambda path: do_video(path, args.debug))
+        ui.show()
+
