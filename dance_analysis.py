@@ -303,7 +303,13 @@ class VideoCaptureCache():
                     print("Manual seek")
                 self.capture.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
             self.last_read_frame = self.current_frame
-            valid, frame = self.capture.read()
+            try:
+                valid, frame = self.capture.read()
+            except Exception as e:
+                valid = False
+                frame = None
+                print("Could not read next frame: {}".format(str(e)))
+                
             if self.verbose:
                 print("Cache miss")
 
@@ -433,7 +439,7 @@ def setup(cap, start_maximized=False):
 
     def nothing(x):  # create Trackbar doesn't work without this
         pass
-    cv2.createTrackbar("Speed", "Frame", 30, 60, nothing)
+    cv2.createTrackbar("Speed", "Frame", FPS, 3 * FPS, nothing)
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cv2.createTrackbar("Frame", "Frame", 0, total_frames, nothing)
@@ -573,12 +579,13 @@ def do_video(filepath: str, debug: bool = False, start_paused: bool = False, sta
     # Manually create the window with a flag that should disable right-click context menu.
     cv2.setMouseCallback("Frame", on_mouse_event)
 
-    while current_frame + 8 < total_frames:  # +8 for "error while decoding MB 57 57, bytestream -8"
+    while True:
         try:
             speed_fps = cv2.getTrackbarPos("Speed", "Frame")
         except:
             # Might fail when window is already deconstructed.
             # But then, the application is being terminated anyway.
+            print("Stopping.")
             break
         has_valid_frame = True
 
@@ -589,11 +596,13 @@ def do_video(filepath: str, debug: bool = False, start_paused: bool = False, sta
             current_frame = capture_cache.get_current_frame()
             has_valid_frame, original_frame_image = capture_cache.read()
 
-        frame = original_frame_image.copy()
-
         if not has_valid_frame:
-            break
-
+            move_frame_count(-1)
+            is_in_pause_mode = True
+            continue
+        
+        frame = original_frame_image.copy()
+        
         do_video.width = int(cap.get(3))
         do_video.height = int(cap.get(4))
 
@@ -648,7 +657,7 @@ def do_video(filepath: str, debug: bool = False, start_paused: bool = False, sta
         elif key == ord('6'):  # fast forward ~5 seconds
             move_frame_count(+150)
         elif key == ord("+"):
-            cv2.setTrackbarPos("Speed", "Frame", min((speed_fps // 10) * 10 + 10, 60))
+            cv2.setTrackbarPos("Speed", "Frame", min((speed_fps // 10) * 10 + 10, 3 * FPS))
         elif key == ord("-"):
             cv2.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
         elif key == ord("h"):
