@@ -193,7 +193,7 @@ class FileSelectorUI:
         idx = raw_table.index[row]
         filepath = self.index_map[idx]
 
-        self.on_filepath_selected(filepath)
+        self.on_filepath_selected(filepath, **self.get_additional_processing_kwargs())
 
         # Update row.
         annotations = Annotations.load(filepath, on_error="silent")
@@ -233,6 +233,21 @@ class FileSelectorUI:
 
         self.root = tk.Tk()
         self.root.title("Available videos")
+        
+        self.checkbox_frame = tk.Frame(self.root, width=800, height=100)
+        self.checkbox_frame.pack(fill="x", expand=True)
+        
+        self.checkboxes = []
+        for idx, (argname, description) in enumerate(
+            [
+                ("start_paused", "Start Paused"),
+                ("start_maximized", "Start as Fullscreen"),
+            ]):
+            cb_var = tk.IntVar()
+            cb = tk.Checkbutton(self.checkbox_frame, text=description, variable=cb_var)
+            cb.pack(padx=5, pady=15, side=tk.LEFT)
+            self.checkboxes.append((argname, cb_var))
+
         self.table_frame = tk.Frame(self.root, width=800, height=600)
         self.table_frame.pack(fill="x", expand=True)
         self.pt = pandastable.Table(self.table_frame, dataframe=table, cellwidth=100, width=800)
@@ -240,6 +255,10 @@ class FileSelectorUI:
         self.pt.show()
 
         self.table_frame.mainloop()
+
+    def get_additional_processing_kwargs(self):
+        kwargs = { arg: (variable.get() == 1) for (arg, variable) in self.checkboxes }
+        return kwargs
 
 class VideoCaptureCache():
     def __init__(self, capture, cache_size=FPS * 3, verbose=False):
@@ -302,7 +321,7 @@ class VideoCaptureCache():
 def draw_template(img, current_actuator, filepath, current_time=None):
 
     font = cv2.FONT_HERSHEY_SIMPLEX
-    img = cv2.putText(img, filepath, (600, do_video.height - 20), font, 1, (0, 0, 0), 1, cv2.LINE_AA)
+    img = cv2.putText(img, filepath, (600, do_video.height - 32 - 20), font, 1, (0, 0, 0), 1, cv2.LINE_AA)
 
     # draws actuators (temporarily removed since actuator positions are inaccurate)
     # for i in range(len(do_video.actuator_positions)):
@@ -313,7 +332,7 @@ def draw_template(img, current_actuator, filepath, current_time=None):
 
     if current_time is not None:
         img = cv2.putText(img, "time in seconds: " + str(current_time),
-                      (20, do_video.height - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
+                      (20, do_video.height - 32 - 50), font, 1, (0, 0, 0), 2, cv2.LINE_AA)
 
     return img
 
@@ -407,9 +426,10 @@ def define_actuator_positions(filepath):
     return current_actuator, index
 
 
-def setup(cap):
+def setup(cap, start_maximized=False):
     cv2.namedWindow("Frame", cv2.WINDOW_GUI_NORMAL)
-    # cv2.namedWindow("Frame")
+    if start_maximized:
+        cv2.setWindowProperty("Frame", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     def nothing(x):  # create Trackbar doesn't work without this
         pass
@@ -473,7 +493,7 @@ def calc_frames_to_move(k32: int, debug: bool = False) -> int:
     return nframes
 
 
-def do_video(filepath: str, debug: bool = False):
+def do_video(filepath: str, debug: bool = False, start_paused: bool = False, start_maximized: bool = False):
     # the 10 videos
     # filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
     # filepath = "23092021_11_36_02_2000HZ_muxa.mp4"
@@ -499,7 +519,7 @@ def do_video(filepath: str, debug: bool = False):
     current_frame = capture_cache.get_current_frame()
 
     assert current_frame == 0
-    is_in_pause_mode = False
+    is_in_pause_mode = start_paused
     is_in_draw_vector_mode = False
     hide_past_annotations = False
     normalize_contrast = False
@@ -511,7 +531,7 @@ def do_video(filepath: str, debug: bool = False):
     actuator_pos, mux_index = define_actuator_positions(filepath)
     current_actuator.append(actuator_pos)
 
-    setup(cap)
+    setup(cap, start_maximized=start_maximized)
 
     def move_frame_count(offset, target_frame=None):
         nonlocal current_frame
@@ -693,6 +713,6 @@ if __name__ == "__main__":
         do_video(filepath, args.debug)
     else:
         
-        ui = FileSelectorUI(args.path, on_filepath_selected=lambda path: do_video(path, args.debug))
+        ui = FileSelectorUI(args.path, on_filepath_selected=lambda path, **kwargs: do_video(path, args.debug, **kwargs))
         ui.show()
 
