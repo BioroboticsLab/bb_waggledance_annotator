@@ -151,7 +151,7 @@ class Annotations:
         # Try to read in old annotated data for this video, but don't
         # fail fatally if anything happens.
         try:
-            annotations = Annotations()
+            all_annotations = []
 
             import ast
             import pathlib
@@ -173,30 +173,45 @@ class Annotations:
                 == to_leaf_name(filepath)
             ]
 
-            for all_xy, all_frames in annotations_df[
-                ["marked bee positions", "bee position timestamps"]
-            ].itertuples(index=False):
-                all_xy = parse_string_list(all_xy)
-                all_frames = parse_string_list(all_frames)
+            # Each row constitutes a different set of annotations.
+            for row_index in range(annotations_df.shape[0]):
+                row_df = annotations_df.iloc[row_index : (row_index + 1)]
+                annotations = Annotations()
 
-                for (xy, frame) in zip(all_xy, all_frames):
-                    annotations.update_thorax_position(frame, xy[0], xy[1])
+                for idx, (all_xy, all_frames) in enumerate(
+                    row_df[
+                        ["marked bee positions", "bee position timestamps"]
+                    ].itertuples(index=False)
+                ):
 
-            for all_xy, all_frames, all_uv in annotations_df[
-                [
-                    "waggle start positions",
-                    "waggle start timestamps",
-                    "waggle directions",
-                ]
-            ].itertuples(index=False):
-                all_xy = parse_string_list(all_xy)
-                all_uv = parse_string_list(all_uv)
-                all_frames = parse_string_list(all_frames)
+                    # We only load one row per annotation-session here.
+                    assert idx == 0
 
-                for (xy, frame, uv) in zip(all_xy, all_frames, all_uv):
-                    annotations.update_waggle_start(frame, xy[0], xy[1], uv[0], uv[1])
+                    all_xy = parse_string_list(all_xy)
+                    all_frames = parse_string_list(all_frames)
 
-            return annotations
+                    for (xy, frame) in zip(all_xy, all_frames):
+                        annotations.update_thorax_position(frame, xy[0], xy[1])
+
+                for all_xy, all_frames, all_uv in row_df[
+                    [
+                        "waggle start positions",
+                        "waggle start timestamps",
+                        "waggle directions",
+                    ]
+                ].itertuples(index=False):
+                    all_xy = parse_string_list(all_xy)
+                    all_uv = parse_string_list(all_uv)
+                    all_frames = parse_string_list(all_frames)
+
+                    for (xy, frame, uv) in zip(all_xy, all_frames, all_uv):
+                        annotations.update_waggle_start(
+                            frame, xy[0], xy[1], uv[0], uv[1]
+                        )
+
+                all_annotations.append(annotations)
+
+            return all_annotations
         except Exception as e:
             if on_error == "print":
                 print(
@@ -205,7 +220,7 @@ class Annotations:
                 )
             elif on_error == "raise":
                 raise
-            return None
+            return []
 
     def delete_annotations_on_frame(self, current_frame):
         for annotation_list in (self.raw_thorax_positions, self.waggle_starts):
@@ -233,6 +248,27 @@ class FileSelectorUI:
         for filepath in all_files:
             yield filepath, pathlib.Path(filepath).name
 
+    def load_old_annotation_infos(self, filepath):
+        annotations = Annotations.load(filepath, on_error="silent")
+
+        n_waggle_starts, n_thorax_points, last_annotated_frame = 0, 0, 0
+        n_dances = 0
+
+        if annotations:
+            n_waggle_starts = sum(len(a.waggle_starts) for a in annotations)
+            n_thorax_points = sum(len(a.raw_thorax_positions) for a in annotations)
+            last_annotated_frame = max(
+                int(a.get_maximum_annotated_frame_index() or 0) for a in annotations
+            )
+            n_dances = len(annotations)
+
+        return dict(
+            n_waggle_starts=n_waggle_starts,
+            n_thorax_points=n_thorax_points,
+            last_annotated_frame=last_annotated_frame,
+            n_dances=n_dances,
+        )
+
     def edit_video_file(self, event):
         row = self.pt.get_row_clicked(event)
         raw_table = self.pt.model.df
@@ -242,13 +278,9 @@ class FileSelectorUI:
         self.on_filepath_selected(filepath, **self.get_additional_processing_kwargs())
 
         # Update row.
-        annotations = Annotations.load(filepath, on_error="silent")
-        if annotations is not None:
-            raw_table.at[idx, "n_waggle_starts"] = len(annotations.waggle_starts)
-            raw_table.at[idx, "n_thorax_points"] = len(annotations.raw_thorax_positions)
-            raw_table.at[idx, "last_annotated_frame"] = int(
-                annotations.get_maximum_annotated_frame_index() or 0
-            )
+        annotation_infos = self.load_old_annotation_infos(filepath)
+        for key, value in annotation_infos.items():
+            raw_table.at[idx, key] = value
 
         self.pt.redraw()
 
@@ -263,25 +295,8 @@ class FileSelectorUI:
         for idx, (filepath, filename) in enumerate(self.collect_files()):
             self.index_map[idx] = filepath
 
-            annotations = Annotations.load(filepath, on_error="silent")
-            has_annotations = annotations is not None
-
-            n_waggle_starts, n_thorax_points, last_annotated_frame = 0, 0, 0
-
-            if has_annotations:
-                n_waggle_starts = len(annotations.waggle_starts)
-                n_thorax_points = len(annotations.raw_thorax_positions)
-                last_annotated_frame = int(
-                    annotations.get_maximum_annotated_frame_index() or 0
-                )
-
-            metadata = dict(
-                index=idx,
-                filename=filename,
-                n_waggle_starts=n_waggle_starts,
-                n_thorax_points=n_thorax_points,
-                last_annotated_frame=last_annotated_frame,
-            )
+            metadata = dict(index=idx, filename=filename)
+            metadata = {**metadata, **self.load_old_annotation_infos(filepath)}
 
             table.append(metadata)
 
@@ -765,12 +780,13 @@ def do_video(
             hide_past_annotations=hide_past_annotations,
         )
         if old_annotations and not hide_past_annotations:
-            frame = draw_bee_positions(
-                frame,
-                old_annotations,
-                current_frame=current_frame,
-                is_old_annotations=True,
-            )
+            for old_annotations_session in old_annotations:
+                frame = draw_bee_positions(
+                    frame,
+                    old_annotations_session,
+                    current_frame=current_frame,
+                    is_old_annotations=True,
+                )
 
         cv.setTrackbarPos("Frame", "Frame", int(current_frame))
 
