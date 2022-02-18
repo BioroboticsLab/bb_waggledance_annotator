@@ -314,6 +314,7 @@ class FileSelectorUI:
             [
                 ("start_paused", "Start Paused"),
                 ("start_maximized", "Start as Fullscreen"),
+                ("enable_fit_image_to_window", "Fit image size to window"),
             ]
         ):
             cb_var = tk.IntVar()
@@ -656,11 +657,42 @@ def calc_frames_to_move(k32: int, debug: bool = False) -> int:
     return nframes
 
 
+def fit_image_to_aspect_ratio(image, target_width, target_height):
+    """
+    Fits the aspect ratio of an image to fit in given width/height constraints.
+    The aspect ratio is changed by adding a black border at the bottom or right of the image;
+    this retains the pixel coordinates so that annotation coordinates do not have to be adjusted.
+    """
+
+    image_height, image_width, _ = image.shape
+
+    target_aspect = target_width / target_height
+    image_aspect = image_width / image_height
+
+    bottom_border = 0
+    right_border = 0
+
+    if target_aspect == image_aspect:
+        pass
+    elif target_aspect > image_aspect:
+        right_border = int(image_height * target_aspect) - image_width
+    else:
+        bottom_border = int(image_width / target_aspect) - image_height
+
+    if bottom_border > 0 or right_border > 0:
+        image = cv.copyMakeBorder(
+            image, 0, bottom_border, 0, right_border, cv.BORDER_CONSTANT
+        )
+
+    return image
+
+
 def do_video(
     filepath: str,
     debug: bool = False,
     start_paused: bool = False,
     start_maximized: bool = False,
+    enable_fit_image_to_window: bool = False,
 ):
     # filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
     annotations = Annotations()
@@ -848,6 +880,16 @@ def do_video(
             max_frame = annotations.get_maximum_annotated_frame_index()
             if max_frame is not None:
                 move_frame_count(offset=0, target_frame=max_frame)
+
+        if enable_fit_image_to_window:
+            try:
+                _, _, window_width, window_height = cv.getWindowImageRect("Frame")
+                if window_width > 0 and window_height > 0:
+                    frame = fit_image_to_aspect_ratio(
+                        frame, window_width, window_height
+                    )
+            except Exception as e:
+                print("Could not fit image to window: {}".format(str(e)))
 
         cv.imshow("Frame", frame)
 
