@@ -552,7 +552,7 @@ def define_actuator_positions(filepath):
         "muxa",
     ]
 
-    current_actuator = "none"
+    current_actuator = []
     index = -1
 
     for i in range(len(do_video.actuators)):
