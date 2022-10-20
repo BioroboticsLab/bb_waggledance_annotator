@@ -1,4 +1,50 @@
 #!/usr/bin/env python3
+"""!
+Overview
+--------
+
+This is a small Python tool to annotate videos with either arrows (left click) or just points (right click).
+
+Each annotation session for a video is considered to be belong to "one dance" and during that session only the data for that dance can be modified.
+Usually, the first frame of a waggle run is annotated with a vector by left-clicking on the bee's thorax and dragging the arrow in the direction of the individual's orientation.
+The last frame of the waggle (the end of the waggle run) is marked by right-clicking the thorax of the bee.
+
+As each left-click annotation should be paired with a right-click annotation,
+matching the arrow to the next thorax annotation therefore also gives the duration of a waggle run.
+
+Once the dance is fully annotated, the video can be closed (e.g. with Q) and the data will be saved automatically.
+To fully erase already saved annotations, it will be necessary to delete the corresponding lines from the output .csv file.
+To erase and reset the current annotation session, you can press R.
+
+To anotate another dance in the video, simply reopen the file from the file selector. Already annotated dances will be shown in grey, making it easier to spot yet unmarked waggles.
+
+In each frame of the video, only one annotation of either type (arrow or point) can exist. So to change an annotation, go to the corresponding frame and left-click or right-click again.
+Annotations in a specific frame can be removed with the Backspace (<-, above Enter) key.
+
+Keymapping
+-----------
+
+| Key                       | Description                                                                                 | 
+|---------------------------|---------------------------------------------------------------------------------------------|
+| Left click                | Create new arrow or update existing one (hold pressed down to specify direction).           |
+| Right click               | Create new point or update existing one. |
+| Space                     | Pause/unpause playback. |
+| a                         | Go one frame back in time. |
+| d                         | Go one frame forward in time. |
+| w or shift+d              | Go one second forward in time. |
+| s or shift+a              | Go one second backward in time. |
+| 1 or ctrl+a               | Go five seconds back in time. |
+| 3 or ctrl+d               | Go five seconds forward in time. |
+| f                         | Jump to the last annotation in the video. |
+| +                         | Increase replay speed. |
+| -                         | Decrease replay speed. |
+| h                         | Hide/show all annotations except for the most recent ones. |
+| c                         | Enable/Disable contrast improvement. |
+| r                         | Delete all current annotations and go to start of video. |
+| q                         | Save current annotations and close video. |
+
+"""
+
 import re
 import sys
 import csv
@@ -10,24 +56,14 @@ import cv2 as cv
 import numpy as np
 import pandas as pd
 
-# Possible user inputs:
-
-# double click - marks stop position (only once per video)
-# right click - marks bee position
-# space bar - pause video
-# speed trackbar - speed up/ slow down video
-# "5" - rewind 5 seconds
-# "6" - skip forward 5 seconds
-# "r" - restart video/ deletes already marked positions
-# "q" - quit/ end video (still saves data to file)
-
-# Global, for skip forward/back
-FPS = 30
+# Global FPS setting.
+# -1 means the software will query the video metadata.
+VIDEO_FPS = -1
 
 
 def get_output_filename(filepath):
     # Currently the output filename is independent of the video filepath.
-    return "data_analysis_23092021.csv"
+    return "video_annotations.csv"
 
 
 def get_csv_writer_options():
@@ -50,7 +86,8 @@ class AnnotatedPosition:
 class Annotations:
     @staticmethod
     def get_annotation_index_for_frame(list, frame):
-        index = [idx for idx, position in enumerate(list) if position.frame == frame]
+        index = [idx for idx, position in enumerate(
+            list) if position.frame == frame]
         assert len(index) < 2
         if len(index) == 0:
             return None
@@ -169,18 +206,18 @@ class Annotations:
                 return pathlib.Path(path).name
 
             annotations_df = annotations_df[
-                annotations_df["video name"].apply(to_leaf_name)
+                annotations_df["video_name"].apply(to_leaf_name)
                 == to_leaf_name(filepath)
             ]
 
             # Each row constitutes a different set of annotations.
             for row_index in range(annotations_df.shape[0]):
-                row_df = annotations_df.iloc[row_index : (row_index + 1)]
+                row_df = annotations_df.iloc[row_index: (row_index + 1)]
                 annotations = Annotations()
 
                 for idx, (all_xy, all_frames) in enumerate(
                     row_df[
-                        ["marked bee positions", "bee position timestamps"]
+                        ["thorax_positions", "thorax_frames"]
                     ].itertuples(index=False)
                 ):
 
@@ -195,9 +232,9 @@ class Annotations:
 
                 for all_xy, all_frames, all_uv in row_df[
                     [
-                        "waggle start positions",
-                        "waggle start timestamps",
-                        "waggle directions",
+                        "waggle_start_positions",
+                        "waggle_start_frames",
+                        "waggle_directions",
                     ]
                 ].itertuples(index=False):
                     all_xy = parse_string_list(all_xy)
@@ -256,7 +293,8 @@ class FileSelectorUI:
 
         if annotations:
             n_waggle_starts = sum(len(a.waggle_starts) for a in annotations)
-            n_thorax_points = sum(len(a.raw_thorax_positions) for a in annotations)
+            n_thorax_points = sum(len(a.raw_thorax_positions)
+                                  for a in annotations)
             last_annotated_frame = max(
                 int(a.get_maximum_annotated_frame_index() or 0) for a in annotations
             )
@@ -275,7 +313,8 @@ class FileSelectorUI:
         idx = raw_table.index[row]
         filepath = self.index_map[idx]
 
-        self.on_filepath_selected(filepath, **self.get_additional_processing_kwargs())
+        self.on_filepath_selected(
+            filepath, **self.get_additional_processing_kwargs())
 
         # Update row.
         annotation_infos = self.load_old_annotation_infos(filepath)
@@ -310,15 +349,16 @@ class FileSelectorUI:
         self.checkbox_frame.pack(fill="x", expand=True)
 
         self.checkboxes = []
-        for idx, (argname, description) in enumerate(
+        for idx, (argname, description, default_value) in enumerate(
             [
-                ("start_paused", "Start Paused"),
-                ("start_maximized", "Start as Fullscreen"),
-                ("enable_fit_image_to_window", "Fit image size to window"),
+                ("start_paused", "Start Paused", 0),
+                ("start_maximized", "Start as Fullscreen", 1),
+                ("enable_fit_image_to_window", "Fit image size to window", 1),
             ]
         ):
-            cb_var = tk.IntVar()
-            cb = tk.Checkbutton(self.checkbox_frame, text=description, variable=cb_var)
+            cb_var = tk.IntVar(value=default_value)
+            cb = tk.Checkbutton(self.checkbox_frame,
+                                text=description, variable=cb_var)
             cb.pack(padx=5, pady=15, side=tk.LEFT)
             self.checkboxes.append((argname, cb_var))
 
@@ -333,12 +373,13 @@ class FileSelectorUI:
         self.table_frame.mainloop()
 
     def get_additional_processing_kwargs(self):
-        kwargs = {arg: (variable.get() == 1) for (arg, variable) in self.checkboxes}
+        kwargs = {arg: (variable.get() == 1)
+                  for (arg, variable) in self.checkboxes}
         return kwargs
 
 
 class VideoCaptureCache:
-    def __init__(self, capture, cache_size=FPS * 3, verbose=False):
+    def __init__(self, capture, cache_size=VIDEO_FPS * 3, verbose=False):
 
         self.verbose = verbose
         self.capture = capture
@@ -353,7 +394,8 @@ class VideoCaptureCache:
         if len(self.cache) == 0:
             return
 
-        all_keys_with_ages = list((age, key) for key, (age, _, _) in self.cache.items())
+        all_keys_with_ages = list((age, key)
+                                  for key, (age, _, _) in self.cache.items())
         _, oldest = sorted(all_keys_with_ages)[0]
 
         del self.cache[oldest]
@@ -402,13 +444,13 @@ class VideoCaptureCache:
         return valid, frame
 
 
-def draw_template(img, current_actuator, filepath, current_time=None):
+def draw_template(img, filepath, video_height, current_time=None):
 
     font = cv.FONT_HERSHEY_SIMPLEX
     img = cv.putText(
         img,
         filepath,
-        (600, do_video.height - 32 - 20),
+        (600, video_height - 32 - 20),
         font,
         1,
         (0, 0, 0),
@@ -416,22 +458,11 @@ def draw_template(img, current_actuator, filepath, current_time=None):
         cv.LINE_AA,
     )
 
-    # Draws actuators (temporarily removed since actuator positions are inaccurate)
-    # for i in range(len(do_video.actuator_positions)):
-    #     img = cv.circle(
-    #         img, (do_video.actuator_positions[i][0],
-    #         do_video.actuator_positions[i][1]), 10, (255, 0, 0), 2)
-    #
-    # Mark activated actuator
-    # if current_actuator[0]:
-    #     img = cv.circle(img, (current_actuator[0][0],
-    #     current_actuator[0][1]), 10, (255, 0, 0), 5)
-
     if current_time is not None:
         img = cv.putText(
             img,
             "time in seconds: " + str(current_time),
-            (20, do_video.height - 32 - 50),
+            (20, video_height - 32 - 50),
             font,
             1,
             (0, 0, 0),
@@ -462,7 +493,8 @@ def draw_bee_positions(
         )
 
     if annotations.raw_thorax_positions:
-        last_marker_frame = max([p.frame for p in annotations.raw_thorax_positions])
+        last_marker_frame = max(
+            [p.frame for p in annotations.raw_thorax_positions])
 
     for position in annotations.raw_thorax_positions:
         is_last_marker = position.frame == last_marker_frame
@@ -473,7 +505,8 @@ def draw_bee_positions(
 
         radius = 5 if not is_in_current_frame else 10
         img = cv.circle(
-            img, (position.x, position.y), radius, colormap["thorax_position"], 2
+            img, (position.x,
+                  position.y), radius, colormap["thorax_position"], 2
         )
 
         # We want to mark the bee 100 frames after the last thorax marking,
@@ -491,7 +524,8 @@ def draw_bee_positions(
             )
 
     if annotations.waggle_starts:
-        last_waggle_start_frame = max([p.frame for p in annotations.waggle_starts])
+        last_waggle_start_frame = max(
+            [p.frame for p in annotations.waggle_starts])
 
     for position in annotations.waggle_starts:
         is_last_marker = position.frame == last_waggle_start_frame
@@ -524,58 +558,16 @@ def draw_bee_positions(
     return img
 
 
-def define_actuator_positions(filepath):
-    # do_video.actuator_positions = [
-    #     [1491, 311], [1114, 300], [719, 294], [314, 297],
-    #     [296, 653], [716, 636], [1112, 632], [1506, 635]] # wrong order
-    do_video.actuator_positions = [
-        [1506, 635],
-        [1112, 632],
-        [716, 636],
-        [296, 653],
-        [314, 297],
-        [719, 294],
-        [1114, 300],
-        [1491, 311],
-    ]
-    # preliminary
-
-    do_video.actuators = [
-        "mux0",
-        "mux1",
-        "mux2",
-        "mux3",
-        "mux4",
-        "mux5",
-        "mux6",
-        "mux7",
-        "muxa",
-    ]
-
-    current_actuator = []
-    index = -1
-
-    for i in range(len(do_video.actuators)):
-        if re.search(do_video.actuators[i], filepath.lower()):
-            if do_video.actuators[i] != "muxa":
-                current_actuator = do_video.actuator_positions[i]
-                index = i
-            else:
-                current_actuator = []
-                index = 8
-
-    return current_actuator, index
-
-
 def setup(cap, start_maximized=False):
     cv.namedWindow("Frame", cv.WINDOW_GUI_NORMAL)
     if start_maximized:
-        cv.setWindowProperty("Frame", cv.WND_PROP_FULLSCREEN, cv.WINDOW_FULLSCREEN)
+        cv.setWindowProperty(
+            "Frame", cv.WND_PROP_FULLSCREEN, cv.WINDOW_FULLSCREEN)
 
     def nothing(x):  # create Trackbar doesn't work without this
         pass
 
-    cv.createTrackbar("Speed", "Frame", FPS, 3 * FPS, nothing)
+    cv.createTrackbar("Speed", "Frame", VIDEO_FPS, 3 * VIDEO_FPS, nothing)
 
     total_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
     cv.createTrackbar("Frame", "Frame", 0, total_frames, nothing)
@@ -586,24 +578,16 @@ def calculate_time(current_frame, video_fps):
     return round(frame_timestamp_sec, 2)
 
 
-def output_data(annotations: Annotations, min_max, filepath, mux_index):
-
-    print(
-        "Marked bee positions: "
-        + str([(p.frame, p.x, p.y) for p in annotations.raw_thorax_positions])
-    )
-    print("min/max distances to actuator: " + str(min_max))
+def output_data(annotations: Annotations, filepath):
 
     # Write to csv
     header = [
-        "video name",
-        "activated actuator",
-        "min/max distances",
-        "marked bee positions",
-        "bee position timestamps",
-        "waggle start positions",
-        "waggle start timestamps",
-        "waggle directions",
+        "video_name",
+        "thorax_positions",
+        "thorax_frames",
+        "waggle_start_positions",
+        "waggle_start_frames",
+        "waggle_directions",
     ]
     thorax_xy = [(p.x, p.y) for p in annotations.raw_thorax_positions]
     thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
@@ -612,8 +596,6 @@ def output_data(annotations: Annotations, min_max, filepath, mux_index):
     waggle_directions = [(p.u, p.v) for p in annotations.waggle_starts]
     data = [
         filepath,
-        do_video.actuators[mux_index],
-        min_max,
         thorax_xy,
         thorax_frames,
         waggle_xy,
@@ -648,9 +630,9 @@ def calc_frames_to_move(k32: int, debug: bool = False) -> int:
         )
     nframes = 1
     if shift:
-        nframes = int(FPS * 1)
+        nframes = int(VIDEO_FPS * 1)
     elif ctrl:
-        nframes = int(FPS * 5)
+        nframes = int(VIDEO_FPS * 5)
     elif alt:
         nframes = int(5)
 
@@ -694,16 +676,22 @@ def do_video(
     start_maximized: bool = False,
     enable_fit_image_to_window: bool = False,
 ):
-    # filepath = "23092021_08_01_22_2000HZ_muxa.mp4"
+    global VIDEO_FPS
     annotations = Annotations()
     old_annotations = Annotations.load(filepath)
 
     cap = cv.VideoCapture(filepath)
-    capture_cache = VideoCaptureCache(cap)
 
     total_frames = cap.get(cv.CAP_PROP_FRAME_COUNT)
     video_reader_fps = cap.get(cv.CAP_PROP_FPS)
 
+    if VIDEO_FPS == -1:
+        if video_reader_fps > 0:
+            VIDEO_FPS = int(video_reader_fps + 0.5)
+        else:
+            VIDEO_FPS = 60
+
+    capture_cache = VideoCaptureCache(cap)
     original_frame_image = None
     current_frame = capture_cache.get_current_frame()
 
@@ -712,13 +700,6 @@ def do_video(
     is_in_draw_vector_mode = False
     hide_past_annotations = False
     normalize_contrast = False
-
-    do_video.actuator_positions = []
-    do_video.actuators = []
-
-    current_actuator = []
-    actuator_pos, mux_index = define_actuator_positions(filepath)
-    current_actuator.append(actuator_pos)
 
     setup(cap, start_maximized=start_maximized)
 
@@ -760,7 +741,7 @@ def do_video(
                 is_in_pause_mode = False
             annotations.update_waggle_direction(current_frame, x, y)
 
-    # Manually create the window with a flag that should disable
+    # We had to create the window with a flag that disables
     # right-click context menu.
     cv.setMouseCallback("Frame", on_mouse_event)
 
@@ -789,8 +770,7 @@ def do_video(
 
         frame = original_frame_image.copy()
 
-        do_video.width = int(cap.get(3))
-        do_video.height = int(cap.get(4))
+        video_height = int(cap.get(4))  # width would be get(3)
 
         if normalize_contrast:
             # Use in-place operations for a slightly better performance.
@@ -801,8 +781,8 @@ def do_video(
 
         frame = draw_template(
             frame,
-            current_actuator,
             filepath,
+            video_height=video_height,
             current_time=calculate_time(current_frame, video_reader_fps),
         )
         frame = draw_bee_positions(
@@ -829,10 +809,8 @@ def do_video(
         else:
             delay_ms = max(1, int(1000 / speed_fps))
 
-        # key = cv.waitKey(delay_ms)
         k32 = cv.waitKeyEx(delay_ms)
         key = k32 & 0xff
-
         nframes = calc_frames_to_move(k32, debug)
 
         if key == ord("q"):
@@ -852,24 +830,22 @@ def do_video(
         elif key in [ord("d"), ord("D"), 0x53]:
             # 0x53 is right arrow (weird, should be 37-40 LURD)
             move_frame_count(+nframes)
-        # elif key == ord('a'):
-        #     move_frame_count(-1)
-        # elif key == ord('d'):
-        #     move_frame_count(+1)
         elif key == ord("w"):
-            move_frame_count(+25)
+            move_frame_count(+VIDEO_FPS)
         elif key == ord("s"):
-            move_frame_count(-25)
-        elif key == ord("5"):  # rewind ~5 seconds
-            move_frame_count(-150)
-        elif key == ord("6"):  # fast forward ~5 seconds
-            move_frame_count(+150)
+            move_frame_count(-VIDEO_FPS)
+        elif key == ord("1"):
+            move_frame_count(-5 * VIDEO_FPS)
+        elif key == ord("3"):
+            move_frame_count(+5 * VIDEO_FPS)
         elif key == ord("+"):
             cv.setTrackbarPos(
-                "Speed", "Frame", min((speed_fps // 10) * 10 + 10, 3 * FPS)
+                "Speed", "Frame", min(
+                    (speed_fps // 10) * 10 + 10, 3 * VIDEO_FPS)
             )
         elif key == ord("-"):
-            cv.setTrackbarPos("Speed", "Frame", max((speed_fps // 10) * 10 - 10, 0))
+            cv.setTrackbarPos("Speed", "Frame", max(
+                (speed_fps // 10) * 10 - 10, 0))
         elif key == ord("h"):
             hide_past_annotations = not hide_past_annotations
         elif key == ord("c"):
@@ -883,7 +859,8 @@ def do_video(
 
         if enable_fit_image_to_window:
             try:
-                _, _, window_width, window_height = cv.getWindowImageRect("Frame")
+                _, _, window_width, window_height = cv.getWindowImageRect(
+                    "Frame")
                 if window_width > 0 and window_height > 0:
                     frame = fit_image_to_aspect_ratio(
                         frame, window_width, window_height
@@ -893,73 +870,28 @@ def do_video(
 
         cv.imshow("Frame", frame)
 
-    min_max = None
-    if len(current_actuator) > 0:
-        min_max = annotations.calculate_min_max_thorax_distance_to_actuator(
-            current_actuator[0]
-        )
-
     cap.release()
     cv.destroyAllWindows()
 
     # store dataset in file
     if not annotations.is_empty():
-        output_data(annotations, min_max, filepath, mux_index)
+        output_data(annotations, filepath)
     else:
         print("No annotations to save.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument('-v', '--verb', action='store_true')
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "-p", "--path", type=str, default="./", help="select path to video files"
     )
-    parser.add_argument(
-        "-n",
-        "--num",
-        type=int,
-        default=None,
-        required=False,
-        help="select the video number to analyse",
-    )
     args = parser.parse_args()
 
-    if args.num is not None:
-        # the 10 videos
-        files = [
-            "23092021_07_45_57_2000HZ_muxa.mp4",
-            "23092021_08_01_22_2000HZ_muxa.mp4",
-            "23092021_08_16_43_2000HZ_mux0.mp4",
-            "23092021_10_33_04_2000HZ_mux4.mp4",
-            "23092021_11_36_02_2000HZ_muxa.mp4",
-            "24092021_08_20_20_2000HZ_mux0.mp4",
-            "24092021_09_45_15_2000HZ_mux3.mp4",
-            "24092021_09_49_34_2000HZ_mux0.mp4",
-            "28092021_10_27_18_2000HZ_mux2.mp4",
-            "30092021_12_01_02_2000HZ_mux7.mp4",
-        ]
-        if args.num is None or args.num < 0 or args.num > len(files):
-            print(f"[E] we have {len(files)} files, pick one with -n <N>:")
-            print("\n".join([f"  {i:3d}:  {f}" for i, f in enumerate(files)]))
-            sys.exit(1)  # lazy exit
-
-        vidfile = files[args.num]
-        print(f"[I] index {args.num} -> file {vidfile}")
-        filepath = os.path.join(args.path, vidfile)
-        if not os.path.exists(filepath):
-            raise RuntimeError(
-                f"[E] file {filepath} not available. check --path option"
-            )
-
-        do_video(filepath, args.debug)
-    else:
-
-        ui = FileSelectorUI(
-            args.path,
-            on_filepath_selected=lambda path, **kwargs: do_video(
-                path, args.debug, **kwargs
-            ),
-        )
-        ui.show()
+    ui = FileSelectorUI(
+        args.path,
+        on_filepath_selected=lambda path, **kwargs: do_video(
+            path, args.debug, **kwargs
+        ),
+    )
+    ui.show()
