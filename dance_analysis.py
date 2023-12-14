@@ -339,6 +339,11 @@ class FileSelectorUI:
 
             table.append(metadata)
 
+        if not table:
+            from tkinter import messagebox
+            messagebox.showerror("No files found", "No video files available. Stopping.")
+            exit(1)
+
         table = pd.DataFrame(table).sort_values("filename")
         table.set_index("index", inplace=True)
 
