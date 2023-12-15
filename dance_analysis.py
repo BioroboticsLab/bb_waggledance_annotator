@@ -467,8 +467,36 @@ class FramePostprocessingPipeline:
 
         def __init__(self, frame, mouse_position):
             
+            self.mouse_position = mouse_position
+            self.frame_shape = frame.shape
+            self.zoom_factor = 2
+
+            self.update_zoom(self.mouse_position, self.frame_shape, self.zoom_factor)
+
+        def update_zoom(self, mouse_position, frame_shape, zoom):
+            mouse_x, mouse_y = mouse_position
+
+            scale = 1.0 / zoom
             self.x, self.y = 0, 0
-            self.h, self.w = frame.shape[:2]
+            self.h, self.w  = int(scale * frame_shape[0]), int(scale * frame_shape[1])
+
+            self.x = mouse_x - self.w // 2
+            self.y = mouse_y - self.h // 2
+
+            right_side = self.x + self.w
+            bottom_side = self.y + self.h
+
+            if right_side > frame_shape[1]:
+                self.x -= (right_side - frame_shape[1])
+            
+            if bottom_side > frame_shape[0]:
+                self.y -= (bottom_side - frame_shape[0])
+
+            if self.x < 0:
+                self.x = 0
+            if self.y < 0:
+                self.y = 0
+
 
         def process(self, frame):
 
@@ -484,6 +512,18 @@ class FramePostprocessingPipeline:
         def transform_coordinates_screen_to_video(self, coords):
             x, y = coords
             return (x + self.x, y + self.y)
+        
+        def adjust_zoom(self, direction):
+            if direction > 0:
+                self.zoom_factor *= 1.1
+            else:
+                self.zoom_factor /= 1.1
+            
+            self.zoom_factor = max(self.zoom_factor, 1.0)
+            self.zoom_factor = min(self.zoom_factor, 8.0)
+
+            self.update_zoom(self.mouse_position, self.frame_shape, self.zoom_factor)
+
         
     class ContrastNormalizationFast(PipelineStep):
         
@@ -575,6 +615,11 @@ class FramePostprocessingPipeline:
             if step is not None:
                 coords = step.transform_coordinates_screen_to_video(coords)
         return coords
+    
+    def adjust_zoom(self, direction):
+        step = self.steps[FramePostprocessingPipeline.CROP]
+        if step is not None:
+            step.adjust_zoom(direction)
 
 def draw_template(img, filepath, current_time=None):
 
@@ -887,6 +932,8 @@ def do_video(
             if is_in_pause_mode == 2:
                 is_in_pause_mode = False
             annotations.update_waggle_direction(current_frame, x, y)
+        elif event == cv.EVENT_MOUSEWHEEL:
+            frame_postprocessing_pipeline.adjust_zoom(int(flags > 0))
 
     # We had to create the window with a flag that disables
     # right-click context menu.
