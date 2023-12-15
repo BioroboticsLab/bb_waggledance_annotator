@@ -454,7 +454,15 @@ class FramePostprocessingPipeline:
     CONTRAST = 0
     MAX_STEPS = 1
 
-    class ContrastNormalizationFast:
+    class PipelineStep:
+        def process(self, frame):
+            return frame
+        def transform_coordinates_video_to_screen(self, coords):
+            return coords
+        def transform_coordinates_screen_to_video(self, coords):
+            return coords
+
+    class ContrastNormalizationFast(PipelineStep):
         
         def __init__(self, **kwargs):
             pass
@@ -469,7 +477,7 @@ class FramePostprocessingPipeline:
 
             return frame
         
-    class ContrastNormalizationFastCenter:
+    class ContrastNormalizationFastCenter(PipelineStep):
         
         def __init__(self, frame):
             H, W = frame.shape[:2]
@@ -493,7 +501,7 @@ class FramePostprocessingPipeline:
 
             return frame
         
-    class ContrastHistogramEqualization:
+    class ContrastHistogramEqualization(PipelineStep):
 
         def __init__(self, **kwargs):
             pass
@@ -525,8 +533,21 @@ class FramePostprocessingPipeline:
         new_step = options[self.options_map[FramePostprocessingPipeline.CONTRAST]]
         self.steps[FramePostprocessingPipeline.CONTRAST] = new_step(frame=last_frame) if new_step is not None else None
 
+    def transform_coordinates_video_to_screen(self, coords):
+        for step in self.steps:
+            if step is not None:
+                coords = step.transform_coordinates_video_to_screen(coords)
+        return coords
+    
+    def transform_coordinates_screen_to_video(self, coords):
+        for step in self.steps:
+            if step is not None:
+                coords = step.transform_coordinates_screen_to_video(coords)
+        return coords
 
-def draw_template(img, filepath, video_height, current_time=None):
+def draw_template(img, filepath, current_time=None):
+
+    video_height = img.shape[0]
 
     font = cv.FONT_HERSHEY_SIMPLEX
     img = cv.putText(
@@ -561,6 +582,7 @@ def draw_bee_positions(
     current_frame,
     is_old_annotations=False,
     hide_past_annotations=False,
+    frame_postprocessing_pipeline=None
 ):
     colormap = dict(
         thorax_position=(0, 255, 0),
@@ -584,11 +606,14 @@ def draw_bee_positions(
 
         if (not is_last_marker and not is_in_current_frame) and hide_past_annotations:
             continue
+        
+        (x, y) = (position.x, position.y)
+        if frame_postprocessing_pipeline is not None:
+            (x, y) = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
 
         radius = 5 if not is_in_current_frame else 10
         img = cv.circle(
-            img, (position.x,
-                  position.y), radius, colormap["thorax_position"], 2
+            img, (x, y), radius, colormap["thorax_position"], 2
         )
 
         # We want to mark the bee 100 frames after the last thorax marking,
@@ -599,7 +624,7 @@ def draw_bee_positions(
                 size = radius * 6
             img = cv.drawMarker(
                 img,
-                (position.x, position.y),
+                (x, y),
                 colormap["thorax_position_100_frames"],
                 markerType=cv.MARKER_STAR,
                 markerSize=size,
@@ -615,11 +640,15 @@ def draw_bee_positions(
 
         if (not is_last_marker and not is_in_current_frame) and hide_past_annotations:
             continue
-
+        
+        (x, y) = (position.x, position.y)
+        if frame_postprocessing_pipeline is not None:
+            (x, y) = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
+            
         radius = 2 if not is_in_current_frame else 5
         length = 25 if not is_in_current_frame else 50
         img = cv.circle(
-            img, (position.x, position.y), radius, colormap["waggle_start"], 2
+            img, (x, y), radius, colormap["waggle_start"], 2
         )
 
         if not pd.isnull(position.u) and not (
@@ -631,8 +660,8 @@ def draw_bee_positions(
 
             img = cv.arrowedLine(
                 img,
-                (position.x - direction[0], position.y - direction[1]),
-                (position.x + direction[0], position.y + direction[1]),
+                (x - direction[0], y - direction[1]),
+                (x + direction[0], y + direction[1]),
                 colormap["waggle_start"],
                 thickness=1,
             )
@@ -801,8 +830,12 @@ def do_video(
         original_frame_image = None
 
     # Set up mouse interaction callback.
+    last_mouse_position = (0, 0)
     def on_mouse_event(event, x, y, flags, user_data):
         nonlocal current_frame, is_in_draw_vector_mode, is_in_pause_mode
+        nonlocal last_mouse_position, frame_postprocessing_pipeline
+
+        (x, y) = frame_postprocessing_pipeline.transform_coordinates_screen_to_video((x, y))
 
         if event == cv.EVENT_FLAG_RBUTTON:  # right click
             annotations.update_thorax_position(current_frame, x, y)
@@ -815,6 +848,7 @@ def do_video(
                 # Additional marker to True/False for "forced pause".
                 is_in_pause_mode = 2
         elif event == cv.EVENT_MOUSEMOVE:
+            last_mouse_position = (x, y)
             if is_in_draw_vector_mode:
                 annotations.update_waggle_direction(current_frame, x, y)
         elif event == cv.EVENT_LBUTTONUP:
@@ -852,14 +886,11 @@ def do_video(
 
         frame = original_frame_image.copy()
 
-        video_height = int(cap.get(4))  # width would be get(3)
-
         frame = frame_postprocessing_pipeline.process(frame)
 
         frame = draw_template(
             frame,
             filepath,
-            video_height=video_height,
             current_time=calculate_time(current_frame, video_reader_fps),
         )
         frame = draw_bee_positions(
@@ -867,6 +898,7 @@ def do_video(
             annotations,
             current_frame=current_frame,
             hide_past_annotations=hide_past_annotations,
+            frame_postprocessing_pipeline=frame_postprocessing_pipeline
         )
         if old_annotations and not hide_past_annotations:
             for old_annotations_session in old_annotations:
@@ -875,6 +907,7 @@ def do_video(
                     old_annotations_session,
                     current_frame=current_frame,
                     is_old_annotations=True,
+                    frame_postprocessing_pipeline=frame_postprocessing_pipeline
                 )
 
         cv.setTrackbarPos("Frame", "Frame", int(current_frame))
