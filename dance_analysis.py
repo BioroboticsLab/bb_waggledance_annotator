@@ -621,33 +621,28 @@ class FramePostprocessingPipeline:
         if step is not None:
             step.adjust_zoom(direction)
 
-def draw_template(img, filepath, current_time=None):
+def draw_template(img, current_time=None):
 
     video_height = img.shape[0]
 
     font = cv.FONT_HERSHEY_SIMPLEX
-    img = cv.putText(
-        img,
-        filepath,
-        (600, video_height - 32 - 20),
-        font,
-        1,
-        (0, 0, 0),
-        1,
-        cv.LINE_AA,
-    )
 
     if current_time is not None:
-        img = cv.putText(
-            img,
-            "time in seconds: " + str(current_time),
-            (20, video_height - 32 - 50),
-            font,
-            1,
-            (0, 0, 0),
-            2,
-            cv.LINE_AA,
-        )
+        for scale, color in \
+            [
+                (3.0, (50, 50, 50)),
+                (1.0, (255, 255, 255))
+            ]:
+            img = cv.putText(
+                img,
+                "time {:2.2f} s ".format(current_time),
+                (0, video_height - 24),
+                font,
+                1,
+                color,
+                int(2 * scale),
+                cv.LINE_AA,
+            )
 
     return img
 
@@ -745,19 +740,16 @@ def draw_bee_positions(
     return img
 
 
-def setup(cap, start_maximized=False):
+def setup(cap, start_maximized=False, frame_change_callback=lambda x: x):
     cv.namedWindow("Frame", cv.WINDOW_GUI_NORMAL)
     if start_maximized:
         cv.setWindowProperty(
             "Frame", cv.WND_PROP_FULLSCREEN, cv.WINDOW_FULLSCREEN)
 
-    def nothing(x):  # create Trackbar doesn't work without this
-        pass
-
-    cv.createTrackbar("Speed", "Frame", VIDEO_FPS, 3 * VIDEO_FPS, nothing)
+    cv.createTrackbar("Speed", "Frame", VIDEO_FPS, 3 * VIDEO_FPS, lambda x: x)
 
     total_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-    cv.createTrackbar("Frame", "Frame", 0, total_frames, nothing)
+    cv.createTrackbar("Frame", "Frame", 0, total_frames, frame_change_callback)
 
 
 def calculate_time(current_frame, video_fps):
@@ -888,8 +880,6 @@ def do_video(
     hide_past_annotations = False
     frame_postprocessing_pipeline = FramePostprocessingPipeline()
 
-    setup(cap, start_maximized=start_maximized)
-
     def move_frame_count(offset, target_frame=None):
         nonlocal current_frame
         nonlocal cap
@@ -904,6 +894,9 @@ def do_video(
 
         # Clear current raw frame so we fetch a new one even if in pause mode.
         original_frame_image = None
+
+    setup(cap, start_maximized=start_maximized,
+        frame_change_callback=lambda f: move_frame_count(offset = 0, target_frame=f))
 
     # Set up mouse interaction callback.
     last_mouse_position = (0, 0)
@@ -968,7 +961,6 @@ def do_video(
 
         frame = draw_template(
             frame,
-            filepath,
             current_time=calculate_time(current_frame, video_reader_fps),
         )
         frame = draw_bee_positions(
@@ -1037,9 +1029,11 @@ def do_video(
         elif key == ord("h"):
             hide_past_annotations = not hide_past_annotations
         elif key == ord("c"):
-            frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=original_frame_image)
+            if original_frame_image is not None:
+                frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=original_frame_image)
         elif key == ord("v"):
-            frame_postprocessing_pipeline.select_next_cropping(frame=original_frame_image, mouse_position=last_mouse_position)
+            if original_frame_image is not None:
+                frame_postprocessing_pipeline.select_next_cropping(frame=original_frame_image, mouse_position=last_mouse_position)
         elif key in (ord("x"), 8):  # 8 is backspace.
             annotations.delete_annotations_on_frame(current_frame)
         elif key == ord("f"):
