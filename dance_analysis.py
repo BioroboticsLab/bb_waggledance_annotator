@@ -451,8 +451,9 @@ class VideoCaptureCache:
         return valid, frame
 class FramePostprocessingPipeline:
 
-    CONTRAST = 0
-    MAX_STEPS = 1
+    CROP = 0
+    CONTRAST = 1
+    MAX_STEPS = 2
 
     class PipelineStep:
         def process(self, frame):
@@ -462,6 +463,28 @@ class FramePostprocessingPipeline:
         def transform_coordinates_screen_to_video(self, coords):
             return coords
 
+    class CropRectAroundCursor(PipelineStep):
+
+        def __init__(self, frame, mouse_position):
+            
+            self.x, self.y = 0, 0
+            self.h, self.w = frame.shape[:2]
+
+        def process(self, frame):
+
+            frame = frame[(self.y):(self.y + self.h),
+                          (self.x):(self.x + self.w)]
+            
+            return frame
+        
+        def transform_coordinates_video_to_screen(self, coords):
+            x, y = coords
+            return (x - self.x, y - self.y)
+        
+        def transform_coordinates_screen_to_video(self, coords):
+            x, y = coords
+            return (x + self.x, y + self.y)
+        
     class ContrastNormalizationFast(PipelineStep):
         
         def __init__(self, **kwargs):
@@ -523,15 +546,23 @@ class FramePostprocessingPipeline:
                 frame = step.process(frame)
         return frame
     
-    def select_next_contrast_postprocessing(self, last_frame):
-        options = [None,
-                   FramePostprocessingPipeline.ContrastNormalizationFast,
+    def select_next_option(self, option_type, options, **kwargs):
+        options = [None] + options
+        self.options_map[option_type] = (self.options_map[option_type] + 1) % len(options)
+
+        new_step = options[self.options_map[option_type]]
+        self.steps[option_type] = new_step(**kwargs) if new_step is not None else None
+
+    def select_next_cropping(self, **kwargs):
+        options = [FramePostprocessingPipeline.CropRectAroundCursor]
+        self.select_next_option(FramePostprocessingPipeline.CROP, options, **kwargs)
+        
+
+    def select_next_contrast_postprocessing(self, **kwargs):
+        options = [FramePostprocessingPipeline.ContrastNormalizationFast,
                    FramePostprocessingPipeline.ContrastNormalizationFastCenter,
                    FramePostprocessingPipeline.ContrastHistogramEqualization]
-        self.options_map[FramePostprocessingPipeline.CONTRAST] = (self.options_map[FramePostprocessingPipeline.CONTRAST] + 1) % len(options)
-
-        new_step = options[self.options_map[FramePostprocessingPipeline.CONTRAST]]
-        self.steps[FramePostprocessingPipeline.CONTRAST] = new_step(frame=last_frame) if new_step is not None else None
+        self.select_next_option(FramePostprocessingPipeline.CONTRAST, options, **kwargs)
 
     def transform_coordinates_video_to_screen(self, coords):
         for step in self.steps:
@@ -644,7 +675,7 @@ def draw_bee_positions(
         (x, y) = (position.x, position.y)
         if frame_postprocessing_pipeline is not None:
             (x, y) = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
-            
+
         radius = 2 if not is_in_current_frame else 5
         length = 25 if not is_in_current_frame else 50
         img = cv.circle(
@@ -959,7 +990,9 @@ def do_video(
         elif key == ord("h"):
             hide_past_annotations = not hide_past_annotations
         elif key == ord("c"):
-            frame_postprocessing_pipeline.select_next_contrast_postprocessing(original_frame_image)
+            frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=original_frame_image)
+        elif key == ord("v"):
+            frame_postprocessing_pipeline.select_next_cropping(frame=original_frame_image, mouse_position=last_mouse_position)
         elif key in (ord("x"), 8):  # 8 is backspace.
             annotations.delete_annotations_on_frame(current_frame)
         elif key == ord("f"):
