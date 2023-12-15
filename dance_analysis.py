@@ -52,11 +52,17 @@ import csv
 import os.path
 import argparse
 import dataclasses
+import time
 
 import cv2 as cv
 import numpy as np
 import pandas as pd
 import skimage
+
+try:
+    import av
+except ImportError as e:
+    av = None
 
 # Global FPS setting.
 # -1 means the software will query the video metadata.
@@ -361,6 +367,7 @@ class FileSelectorUI:
                 ("start_paused", "Start Paused", 0),
                 ("start_maximized", "Start as Fullscreen", 1),
                 ("enable_fit_image_to_window", "Fit image size to window", 1),
+                ("use_pyav", "Use PyAV library", 0)
             ]
         ):
             cb_var = tk.IntVar(value=default_value)
@@ -384,9 +391,69 @@ class FileSelectorUI:
                   for (arg, variable) in self.checkboxes}
         return kwargs
 
+class PyavVideoCapture:
+    def __init__(self, filename, frame_count, video_fps):
+        self.capture = av.open(filename)
+        self.length = frame_count
+        self.fps = video_fps
+        self.frame_index = 0
 
+    def read(self):
+        
+        if self.frame_index < 0 or self.frame_index > self.length:
+            return False, None
+        
+        try:
+            frame = next(self.capture.decode())
+            self.frame_index += 1
+        except:
+            return False, None
+        
+        return True, frame.to_ndarray(format="bgr24")
+    
+    def get(self, property):
+        if property == cv.CAP_PROP_POS_FRAMES:
+            return self.frame_index
+        if property == cv.CAP_PROP_FRAME_COUNT:
+            return self.length
+        raise ValueError("Unsupported property")
+    
+    def set(self, property, value):
+        if property == cv.CAP_PROP_POS_FRAMES:
+            old_frame_index = self.frame_index
+            self.frame_index = max(0, value)
+
+            if self.frame_index != old_frame_index:
+                print(f"Frame index from {old_frame_index} to {self.frame_index}.")
+                self.seek(self.frame_index)
+            return
+        raise ValueError("Unsupported property")
+    
+    def seek(self, frame_index):
+        print("Seeking to {}".format(frame_index))
+        time_base = self.capture.streams.video[0].time_base
+        framerate = self.capture.streams.video[0].average_rate
+        
+        sec = int(frame_index / framerate) # round down to nearest key frame
+        self.capture.seek(sec * 1000000, whence='time', backward=True)
+
+        keyframe = next(self.capture.decode(video=0))
+        keyframe_frame_index = int(keyframe.pts * time_base * framerate)
+
+        for _ in range(keyframe_frame_index, frame_index - 1):
+            _ = next(self.capture.decode(video=0))
+
+        self.frame_index = frame_index
+
+    def release(self):
+        del self.capture
+        
 class VideoCaptureCache:
-    def __init__(self, capture, cache_size=VIDEO_FPS * 3, verbose=False):
+    def __init__(self, capture, cache_size=None, verbose=False):
+        global VIDEO_FPS
+
+        if cache_size is None:
+            cache_size = VIDEO_FPS * 3
 
         self.verbose = verbose
         self.capture = capture
@@ -409,6 +476,8 @@ class VideoCaptureCache:
 
     def ensure_max_cache_size(self):
         if len(self.cache) > self.cache_size:
+            if self.verbose:
+                print("Dropping item from cache ({} / {})".format(len(self.cache), self.cache_size))
             self.delete_oldest()
 
     def get_current_frame(self):
@@ -424,11 +493,11 @@ class VideoCaptureCache:
         if self.current_frame in self.cache:
             _, valid, frame = self.cache[self.current_frame]
             if self.verbose:
-                print("Cache hit")
+                print("Cache hit ({})".format(self.current_frame))
         else:
             if self.last_read_frame != self.current_frame - 1:
                 if self.verbose:
-                    print("Manual seek")
+                    print("Manual seek ({})".format(self.current_frame))
                 self.capture.set(cv.CAP_PROP_POS_FRAMES, self.current_frame)
             self.last_read_frame = self.current_frame
             try:
@@ -439,7 +508,7 @@ class VideoCaptureCache:
                 print(f"Could not read next frame: {repr(e)}")
 
             if self.verbose:
-                print("Cache miss")
+                print("Cache miss ({})".format(self.current_frame))
 
         self.cache[self.current_frame] = self.age_counter, valid, frame
 
@@ -854,6 +923,7 @@ def do_video(
     start_paused: bool = False,
     start_maximized: bool = False,
     enable_fit_image_to_window: bool = False,
+    use_pyav: bool = False
 ):
     global VIDEO_FPS
     annotations = Annotations()
@@ -863,6 +933,14 @@ def do_video(
 
     total_frames = cap.get(cv.CAP_PROP_FRAME_COUNT)
     video_reader_fps = cap.get(cv.CAP_PROP_FPS)
+
+    if use_pyav:
+        if av is not None:
+            print("Using PyAV library for decoding.")
+            del cap
+            cap = PyavVideoCapture(filepath, total_frames, video_reader_fps)
+        else:
+            print("PyAV library not found, using OpenCV.")
 
     if VIDEO_FPS == -1:
         if video_reader_fps > 0:
@@ -932,6 +1010,10 @@ def do_video(
     # right-click context menu.
     cv.setMouseCallback("Frame", on_mouse_event)
 
+    processing_time_ms_avg = 10.0
+    processing_time_last_start = time.perf_counter()
+    last_raw_frame = None
+
     while True:
         try:
             speed_fps = cv.getTrackbarPos("Speed", "Frame")
@@ -949,6 +1031,8 @@ def do_video(
             # cap.read() will advance the frame number after reading.
             current_frame = capture_cache.get_current_frame()
             has_valid_frame, original_frame_image = capture_cache.read()
+            if original_frame_image is not None:
+                last_raw_frame = original_frame_image
 
         if not has_valid_frame:
             move_frame_count(-1)
@@ -956,7 +1040,6 @@ def do_video(
             continue
 
         frame = original_frame_image.copy()
-
         frame = frame_postprocessing_pipeline.process(frame)
 
         frame = draw_template(
@@ -982,16 +1065,23 @@ def do_video(
 
         cv.setTrackbarPos("Frame", "Frame", int(current_frame))
 
+        last_processing_timestamp = processing_time_last_start
+        current_processing_timestamp = time.perf_counter() # reset counter
+        processing_duration_ms = 1000.0 * (current_processing_timestamp - last_processing_timestamp)
+        processing_time_ms_avg = (0.9 * processing_time_ms_avg) + (0.1 * processing_duration_ms)
+
         if speed_fps <= 0 or is_in_pause_mode:
             # Arbitrary delay > 0, because we need to update the UI
             # even in pause mode.
             delay_ms = 50
         else:
-            delay_ms = max(1, int(1000 / speed_fps))
+            delay_ms = max(1, int(1000 / speed_fps - processing_time_ms_avg))
 
         k32 = cv.waitKeyEx(delay_ms)
         key = k32 & 0xff
         nframes = calc_frames_to_move(k32, debug)
+
+        processing_time_last_start = time.perf_counter() # reset counter after sleep
 
         if key == ord("q"):
             # Press q to exit video
@@ -1029,11 +1119,13 @@ def do_video(
         elif key == ord("h"):
             hide_past_annotations = not hide_past_annotations
         elif key == ord("c"):
-            if original_frame_image is not None:
-                frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=original_frame_image)
+            if last_raw_frame is not None:
+                frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=last_raw_frame)
         elif key == ord("v"):
-            if original_frame_image is not None:
-                frame_postprocessing_pipeline.select_next_cropping(frame=original_frame_image, mouse_position=last_mouse_position)
+            if last_raw_frame is not None:
+                frame_postprocessing_pipeline.select_next_cropping(frame=last_raw_frame, mouse_position=last_mouse_position)
+            else:
+                print("No image woot")
         elif key in (ord("x"), 8):  # 8 is backspace.
             annotations.delete_annotations_on_frame(current_frame)
         elif key == ord("f"):
