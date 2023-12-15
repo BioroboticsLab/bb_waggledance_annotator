@@ -39,9 +39,10 @@ Keymapping
 | +                         | Increase replay speed. |
 | -                         | Decrease replay speed. |
 | h                         | Hide/show all annotations except for the most recent ones. |
-| c                         | Enable/Disable contrast improvement. |
+| c                         | Switch through different contrast improvement methods. |
 | r                         | Delete all current annotations and go to start of video. |
 | q                         | Save current annotations and close video. |
+| x or backspace            | Delete annotations in current frame.  |
 
 """
 
@@ -55,6 +56,7 @@ import dataclasses
 import cv2 as cv
 import numpy as np
 import pandas as pd
+import skimage
 
 # Global FPS setting.
 # -1 means the software will query the video metadata.
@@ -447,6 +449,81 @@ class VideoCaptureCache:
         self.ensure_max_cache_size()
 
         return valid, frame
+class FramePostprocessingPipeline:
+
+    CONTRAST = 0
+    MAX_STEPS = 1
+
+    class ContrastNormalizationFast:
+        
+        def __init__(self, **kwargs):
+            pass
+
+        def process(self, frame):
+
+            # Use in-place operations for a slightly better performance.
+            np.subtract(frame, frame.min(), out=frame)
+            frame = frame.astype(np.float32)
+            np.divide(frame, frame.max() / 255.0, out=frame)
+            frame = frame.astype(np.uint8)
+
+            return frame
+        
+    class ContrastNormalizationFastCenter:
+        
+        def __init__(self, frame):
+            H, W = frame.shape[:2]
+            mid_y, mid_x = H // 2, W // 2
+            crop_h, crop_w = H // 6, W // 6
+            center = frame[(mid_y - crop_h):(mid_y + crop_h), (mid_x - crop_w):(mid_x + crop_w)]
+
+            self.min = center.min()
+            self.max = center.max() - self.min
+            if self.max <= 0:
+                self.max = 1
+
+        def process(self, frame):
+
+            # Use in-place operations for a slightly better performance.
+            frame = frame.astype(np.float32)
+            np.subtract(frame, self.min, out=frame)
+            np.divide(frame, self.max / 255.0, out=frame)
+            np.clip(frame, 0, 255, out=frame)
+            frame = frame.astype(np.uint8)
+
+            return frame
+        
+    class ContrastHistogramEqualization:
+
+        def __init__(self, **kwargs):
+            pass
+
+        def process(self, frame):
+            import skimage.exposure
+
+            frame = skimage.exposure.equalize_hist(frame)
+
+            return frame
+    
+    def __init__(self):
+        self.steps = [None] * FramePostprocessingPipeline.MAX_STEPS
+        self.options_map = [0] * len(self.steps)
+
+    def process(self, frame):
+        for step in self.steps:
+            if step is not None:
+                frame = step.process(frame)
+        return frame
+    
+    def select_next_contrast_postprocessing(self, last_frame):
+        options = [None,
+                   FramePostprocessingPipeline.ContrastNormalizationFast,
+                   FramePostprocessingPipeline.ContrastNormalizationFastCenter,
+                   FramePostprocessingPipeline.ContrastHistogramEqualization]
+        self.options_map[FramePostprocessingPipeline.CONTRAST] = (self.options_map[FramePostprocessingPipeline.CONTRAST] + 1) % len(options)
+
+        new_step = options[self.options_map[FramePostprocessingPipeline.CONTRAST]]
+        self.steps[FramePostprocessingPipeline.CONTRAST] = new_step(frame=last_frame) if new_step is not None else None
 
 
 def draw_template(img, filepath, video_height, current_time=None):
@@ -704,7 +781,7 @@ def do_video(
     is_in_pause_mode = start_paused
     is_in_draw_vector_mode = False
     hide_past_annotations = False
-    normalize_contrast = False
+    frame_postprocessing_pipeline = FramePostprocessingPipeline()
 
     setup(cap, start_maximized=start_maximized)
 
@@ -777,12 +854,7 @@ def do_video(
 
         video_height = int(cap.get(4))  # width would be get(3)
 
-        if normalize_contrast:
-            # Use in-place operations for a slightly better performance.
-            np.subtract(frame, frame.min(), out=frame)
-            frame = frame.astype(np.float32)
-            np.divide(frame, frame.max() / 255.0, out=frame)
-            frame = frame.astype(np.uint8)
+        frame = frame_postprocessing_pipeline.process(frame)
 
         frame = draw_template(
             frame,
@@ -854,7 +926,7 @@ def do_video(
         elif key == ord("h"):
             hide_past_annotations = not hide_past_annotations
         elif key == ord("c"):
-            normalize_contrast = not normalize_contrast
+            frame_postprocessing_pipeline.select_next_contrast_postprocessing(original_frame_image)
         elif key in (ord("x"), 8):  # 8 is backspace.
             annotations.delete_annotations_on_frame(current_frame)
         elif key == ord("f"):
