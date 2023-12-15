@@ -668,8 +668,8 @@ class FramePostprocessingPipeline:
         
 
     def select_next_contrast_postprocessing(self, **kwargs):
-        options = [FramePostprocessingPipeline.ContrastNormalizationFast,
-                   FramePostprocessingPipeline.ContrastNormalizationFastCenter,
+        options = [FramePostprocessingPipeline.ContrastNormalizationFastCenter,
+                   FramePostprocessingPipeline.ContrastNormalizationFast,
                    FramePostprocessingPipeline.ContrastHistogramEqualization]
         self.select_next_option(FramePostprocessingPipeline.CONTRAST, options, **kwargs)
 
