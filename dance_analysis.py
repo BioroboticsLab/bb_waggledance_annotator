@@ -601,8 +601,14 @@ class FramePostprocessingPipeline:
     class ContrastNormalizationFast(PipelineStep):
         
         def __init__(self, frame):
-            data = frame.flatten()
-            self.min, self.max = np.percentile(data, (2, 80))
+
+            H, W = frame.shape[:2]
+            mid_y, mid_x = H // 2, W // 2
+            crop_h, crop_w = H // 3, W // 3
+            center = frame[(mid_y - crop_h):(mid_y + crop_h), (mid_x - crop_w):(mid_x + crop_w)]
+
+            data = center.flatten()
+            self.min, self.max = np.percentile(data, (5, 95))
             self.min = float(self.min)
             self.max = float(self.max) - self.min
 
