@@ -596,15 +596,19 @@ class FramePostprocessingPipeline:
         
     class ContrastNormalizationFast(PipelineStep):
         
-        def __init__(self, **kwargs):
-            pass
+        def __init__(self, frame):
+            data = frame.flatten()
+            self.min, self.max = np.percentile(data, (2, 80))
+            self.min = float(self.min)
+            self.max = float(self.max) - self.min
 
         def process(self, frame):
 
             # Use in-place operations for a slightly better performance.
-            np.subtract(frame, frame.min(), out=frame)
             frame = frame.astype(np.float32)
-            np.divide(frame, frame.max() / 255.0, out=frame)
+            np.subtract(frame, self.min, out=frame)
+            np.divide(frame, self.max / 255.0, out=frame)
+            np.clip(frame, 0, 255, out=frame)
             frame = frame.astype(np.uint8)
 
             return frame
