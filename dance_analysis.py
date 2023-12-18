@@ -583,6 +583,8 @@ class FramePostprocessingPipeline:
             return (x + self.x, y + self.y)
         
         def adjust_zoom(self, direction):
+            old_zoom_factor = self.zoom_factor
+
             if direction > 0:
                 self.zoom_factor *= 1.1
             else:
@@ -592,6 +594,8 @@ class FramePostprocessingPipeline:
             self.zoom_factor = min(self.zoom_factor, 8.0)
 
             self.update_zoom(self.mouse_position, self.frame_shape, self.zoom_factor)
+
+            return self.zoom_factor != old_zoom_factor
 
         
     class ContrastNormalizationFast(PipelineStep):
@@ -659,9 +663,16 @@ class FramePostprocessingPipeline:
                 frame = step.process(frame)
         return frame
     
-    def select_next_option(self, option_type, options, **kwargs):
+    def select_next_option(self, option_type, options, force_index=None, **kwargs):
         options = [None] + options
-        self.options_map[option_type] = (self.options_map[option_type] + 1) % len(options)
+
+        if force_index is None:
+            self.options_map[option_type] = (self.options_map[option_type] + 1) % len(options)
+        else:
+            if self.options_map[option_type] == force_index:
+                return
+            
+            self.options_map[option_type] = force_index
 
         new_step = options[self.options_map[option_type]]
         self.steps[option_type] = new_step(**kwargs) if new_step is not None else None
@@ -669,7 +680,12 @@ class FramePostprocessingPipeline:
     def select_next_cropping(self, **kwargs):
         options = [FramePostprocessingPipeline.CropRectAroundCursor]
         self.select_next_option(FramePostprocessingPipeline.CROP, options, **kwargs)
-        
+    
+    def select_first_cropping(self, **kwargs):
+        self.select_next_cropping(force_index=1, **kwargs)
+
+    def disable_cropping(self, **kwargs):
+        self.select_next_cropping(force_index=0, **kwargs)
 
     def select_next_contrast_postprocessing(self, **kwargs):
         options = [FramePostprocessingPipeline.ContrastNormalizationFastCenter,
@@ -690,9 +706,13 @@ class FramePostprocessingPipeline:
         return coords
     
     def adjust_zoom(self, direction):
+        was_handled = False
         step = self.steps[FramePostprocessingPipeline.CROP]
         if step is not None:
-            step.adjust_zoom(direction)
+            handled_now = step.adjust_zoom(direction)
+            was_handled = was_handled or handled_now
+
+        return was_handled
 
 def draw_template(img, current_time=None):
 
@@ -1008,7 +1028,15 @@ def do_video(
                 is_in_pause_mode = False
             annotations.update_waggle_direction(current_frame, x, y)
         elif event == cv.EVENT_MOUSEWHEEL:
-            frame_postprocessing_pipeline.adjust_zoom(int(flags > 0))
+            is_zooming_in = flags > 0
+            could_zoom_further = frame_postprocessing_pipeline.adjust_zoom(int(is_zooming_in))
+
+            if is_zooming_in:
+                if last_raw_frame is not None:
+                    frame_postprocessing_pipeline.select_first_cropping(frame=last_raw_frame, mouse_position=last_mouse_position)
+            else:
+                if not could_zoom_further:
+                    frame_postprocessing_pipeline.disable_cropping()
 
     # We had to create the window with a flag that disables
     # right-click context menu.
