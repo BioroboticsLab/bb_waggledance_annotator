@@ -70,8 +70,13 @@ VIDEO_FPS = -1
 
 
 def get_output_filename(filepath):
-    # Currently the output filename is independent of the video filepath.
-    return "video_annotations.csv"
+    # Extract the base file name without the extension
+    base_name = os.path.splitext(os.path.basename(filepath))[0]
+    # Get the directory of the input file
+    directory = os.path.dirname(filepath)
+    # Create the output filename in the same directory
+    output_filename = os.path.join(directory, f"{base_name}_waggle_annotations.csv")
+    return output_filename
 
 
 def get_csv_writer_options():
@@ -280,6 +285,8 @@ class FileSelectorUI:
     def __init__(self, root_path, on_filepath_selected):
         self.root_path = root_path
         self.on_filepath_selected = on_filepath_selected
+        self.index_map = {}
+        self.instructions_frame = None        
 
     def collect_files(self):
         import glob
@@ -330,6 +337,61 @@ class FileSelectorUI:
             raw_table.at[idx, key] = value
 
         self.pt.redraw()
+    def create_instructions_table(self, parent):
+        # Create a frame for the instructions table
+        self.instructions_frame = tk.Frame(parent)
+        
+        # Title for the instructions
+        title_label = tk.Label(self.instructions_frame, text="Instructions and Key Mappings", font=('Arial', 14, 'bold'))
+        title_label.pack(pady=(5, 10))
+
+        # Table Frame
+        table_frame = tk.Frame(self.instructions_frame)
+        table_frame.pack(fill="x")
+
+        # Headers
+        headers = ["Key", "Description"]
+        for col_num, header in enumerate(headers):
+            label = tk.Label(table_frame, text=header, font=('Arial', 12, 'bold'), borderwidth=1, relief="solid", padx=5, pady=5)
+            label.grid(row=0, column=col_num, sticky="nsew")
+
+        # Instructions data
+        instructions = [
+            ("Left click", "Create new arrow or update existing one (hold pressed down to specify direction)."),
+            ("Right click", "Create new point or update existing one."),
+            ("Space", "Pause/unpause playback."),
+            ("a", "Go one frame back in time."),
+            ("d", "Go one frame forward in time."),
+            ("w or shift+d", "Go one second forward in time."),
+            ("s or shift+a", "Go one second backward in time."),
+            ("1 or ctrl+a", "Go five seconds back in time."),
+            ("3 or ctrl+d", "Go five seconds forward in time."),
+            ("f", "Jump to the last annotation in the video."),
+            ("+", "Increase replay speed."),
+            ("-", "Decrease replay speed."),
+            ("h", "Hide/show all annotations except for the most recent ones."),
+            ("c", "Switch through different contrast improvement methods."),
+            ("r", "Delete all current annotations and go to start of video."),
+            ("q", "Save current annotations and close video."),
+            ("x or backspace", "Delete annotations in current frame."),
+        ]
+
+        # Fill the table with instructions
+        for row_num, (key, desc) in enumerate(instructions, start=1):
+            key_label = tk.Label(table_frame, text=key, font=('Arial', 12), borderwidth=1, relief="solid", padx=5, pady=5)
+            key_label.grid(row=row_num, column=0, sticky="nsew")
+            desc_label = tk.Label(table_frame, text=desc, font=('Arial', 12), borderwidth=1, relief="solid", padx=5, pady=5)
+            desc_label.grid(row=row_num, column=1, sticky="nsew")
+
+        # Adjust column widths
+        table_frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(1, weight=5)
+
+    def toggle_instructions(self):
+        if self.instructions_frame.winfo_ismapped():
+            self.instructions_frame.pack_forget()
+        else:
+            self.instructions_frame.pack(fill="x", pady=10)
 
     def show(self):
 
@@ -357,6 +419,9 @@ class FileSelectorUI:
 
         self.root = tk.Tk()
         self.root.title("Available videos")
+        # Toggle Button for instructions
+        toggle_button = tk.Button(self.root, text="Show/Hide Instructions", command=self.toggle_instructions)
+        toggle_button.pack(pady=10)
 
         self.checkbox_frame = tk.Frame(self.root, width=800, height=100)
         self.checkbox_frame.pack(fill="x", expand=True)
@@ -365,8 +430,6 @@ class FileSelectorUI:
         for idx, (argname, description, default_value) in enumerate(
             [
                 ("start_paused", "Start Paused", 0),
-                ("start_maximized", "Start as Fullscreen", 1),
-                ("enable_fit_image_to_window", "Fit image size to window", 1),
                 ("use_pyav", "Use PyAV library", 0)
             ]
         ):
@@ -386,9 +449,15 @@ class FileSelectorUI:
 
         self.table_frame.mainloop()
 
+        # Add the instructions table (initially shown)
+        self.create_instructions_table(self.root)
+        self.instructions_frame.pack(fill="x", pady=10)
+
+
     def get_additional_processing_kwargs(self):
         kwargs = {arg: (variable.get() == 1)
                   for (arg, variable) in self.checkboxes}
+        print(kwargs)
         return kwargs
 
 class PyavVideoCapture:
@@ -398,15 +467,33 @@ class PyavVideoCapture:
         self.fps = video_fps
         self.frame_index = 0
 
+        # Select the video stream from the container
+        self.video_stream = next((s for s in self.capture.streams if s.type == 'video'), None)
+        
+        if self.video_stream is None:
+            raise ValueError("No video stream found in the file.")        
+        else:
+            print('Found video stream',  self.video_stream)
+
     def read(self):
-        
         if self.frame_index < 0 or self.frame_index > self.length:
+            print('Returning false due to invalid frame index')
             return False, None
-        
         try:
-            frame = next(self.capture.decode())
+            # Decode the next frame from the video stream
+            frame = next(self.capture.decode(0))  # added index of 0, because just video is being opend
             self.frame_index += 1
-        except:
+        except StopIteration:
+            # End of the video stream
+            print('End of video stream')
+            return False, None
+        except av.AVError as e:
+            # Handle specific PyAV errors
+            print(f"Decoding error: {e}")
+            return False, None
+        except Exception as e:
+            # Handle general errors
+            print(f"Unexpected error: {e}")
             return False, None
         
         return True, frame.to_ndarray(format="bgr24")
@@ -511,13 +598,13 @@ class VideoCaptureCache:
                 print("Cache miss ({})".format(self.current_frame))
 
         self.cache[self.current_frame] = self.age_counter, valid, frame
-
         self.current_frame += 1
         self.age_counter += 1
 
         self.ensure_max_cache_size()
 
         return valid, frame
+    
 class FramePostprocessingPipeline:
 
     CROP = 0
@@ -839,12 +926,8 @@ def draw_bee_positions(
     return img
 
 
-def setup(cap, start_maximized=False, frame_change_callback=lambda x: x):
+def setup(cap, frame_change_callback=lambda x: x):
     cv.namedWindow("Frame", cv.WINDOW_GUI_NORMAL)
-    if start_maximized:
-        cv.setWindowProperty(
-            "Frame", cv.WND_PROP_FULLSCREEN, cv.WINDOW_FULLSCREEN)
-
     cv.createTrackbar("Speed", "Frame", VIDEO_FPS, 3 * VIDEO_FPS, lambda x: x)
 
     total_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
@@ -951,8 +1034,7 @@ def do_video(
     filepath: str,
     debug: bool = False,
     start_paused: bool = False,
-    start_maximized: bool = False,
-    enable_fit_image_to_window: bool = False,
+    enable_fit_image_to_window: bool = True,
     use_pyav: bool = False
 ):
     global VIDEO_FPS
@@ -998,13 +1080,13 @@ def do_video(
             target_frame = current_frame + offset
 
         current_frame = min(max(target_frame, 0), total_frames - 1)
-        capture_cache.set_current_frame(current_frame)
+        if is_in_pause_mode or (current_frame - capture_cache.get_current_frame()>1):
+            capture_cache.set_current_frame(current_frame)
 
         # Clear current raw frame so we fetch a new one even if in pause mode.
         original_frame_image = None
 
-    setup(cap, start_maximized=start_maximized,
-        frame_change_callback=lambda f: move_frame_count(offset = 0, target_frame=f))
+    setup(cap, frame_change_callback=lambda f: move_frame_count(offset = 0, target_frame=f))
 
     # Set up mouse interaction callback.
     last_mouse_position = (0, 0)
@@ -1198,12 +1280,34 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
-        "-p", "--path", type=str, default="./", help="select path to video files"
+        "-p", "--path", type=str, help="select path to video files"
     )
     args = parser.parse_args()
 
+    def select_video_folder():
+        root = tk.Tk()
+        root.withdraw()  # Hide the main window
+
+        # Show a message box before opening the file dialog
+        messagebox.showinfo("Select Directory", "Waggle dance annotator  \n\n Select a folder containing video files for annotation")
+
+        # Open the directory selection dialog, defaulting to the current working directory
+        folder_path = filedialog.askdirectory(
+            title="Select directory",
+            initialdir=os.getcwd()  # Default to the current working directory
+        )
+        return folder_path
+
+    # If no path is provided, open a dialog to select a folder
+    folder_path = args.path if args.path else select_video_folder()
+
+    # Ensure folder_path is valid (i.e., user didn't cancel the dialog)
+    if not folder_path:
+        print("No folder selected. Exiting.")
+        exit(1)
+
     ui = FileSelectorUI(
-        args.path,
+        folder_path,
         on_filepath_selected=lambda path, **kwargs: do_video(
             path, args.debug, **kwargs
         ),
