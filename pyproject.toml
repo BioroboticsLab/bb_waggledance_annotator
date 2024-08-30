@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waggle-dance-annotator"
+version = "0.1.0"
+description = "A tool to annotate videos with either arrows or points for bee waggle dances."
+readme = "README.md"
+requires-python = ">=3.6"
+license = {text = "MIT"}
+dependencies = [
+"numpy",
+"pandas",
+"scikit-image",
+"opencv-python",
+"pyav",
+"pillow",
+"pandastable",
+"tk"
+]
+
+[project.scripts]
+waggle-dance-annotator = "dance_analysis:main"
+
+[tool.setuptools]
+packages = { find = { where = ["."] } }

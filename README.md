@@ -1,2 +1,2 @@
-# bb_waggle_annotator
+# Waggle dance annotator
  
