@@ -7,7 +7,7 @@ This tool provides a GUI interface to annotate videos with the location, directi
 ## Installation
 
 ```bash
-pip install git+https://github.com/BioroboticsLab/dance_analysis.git
+pip install git+https://github.com/BioroboticsLab/bb_waggledance_annotator.git
 ```
 
 ## Usage
