@@ -338,6 +338,7 @@ class FileSelectorUI:
             raw_table.at[idx, key] = value
 
         self.pt.redraw()
+
     def create_instructions_table(self, parent):
         # Create a frame for the instructions table
         self.instructions_frame = tk.Frame(parent)
@@ -420,6 +421,7 @@ class FileSelectorUI:
         self.root = tk.Tk()
         self.root.title("Available videos")
         # Toggle Button for instructions
+        self.create_instructions_table(self.root)  # first create the table object
         toggle_button = tk.Button(self.root, text="Show/Hide Instructions", command=self.toggle_instructions)
         toggle_button.pack(pady=10)
 
@@ -449,8 +451,7 @@ class FileSelectorUI:
 
         self.table_frame.mainloop()
 
-        # Add the instructions table (initially shown)
-        self.create_instructions_table(self.root)
+        # Show the instructions table initially
         self.instructions_frame.pack(fill="x", pady=10)
 
 
@@ -1285,29 +1286,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # def select_video_folder():
-    #     import tkinter as tk
-    #     from tkinter import messagebox, filedialog
-    #     root = tk.Tk()
-    #     root.withdraw()  # Hide the main window
-
-    #     # Show a message box before opening the file dialog
-    #     messagebox.showinfo("Select Directory", "Waggle dance annotator  \n\n Select a folder containing video files for annotation")
-
-    #     # Open the directory selection dialog, defaulting to the current working directory
-    #     folder_path = filedialog.askdirectory(
-    #         title="Select directory",
-    #         initialdir=os.getcwd()  # Default to the current working directory
-    #     )
-    #     return folder_path
-
-    # # If no path is provided, open a dialog to select a folder
-    # folder_path = args.path if args.path else select_video_folder()
-
-    # # Ensure folder_path is valid (i.e., user didn't cancel the dialog)
-    # if not folder_path:
-    #     print("No folder selected. Exiting.")
-    #     exit(1)
 
     folder_path = args.path
 
