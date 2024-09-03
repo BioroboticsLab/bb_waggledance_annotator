@@ -2,6 +2,8 @@
 
 This tool provides a GUI interface to annotate videos with the location, direction, and timing of honey bee waggle dances in an observation hive.
 
+![](https://github.com/BioroboticsLab/bb_main/blob/master/images/waggle_annotator_tool.png?raw=True)
+
 ## Installation
 
 ```bash
