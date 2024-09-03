@@ -287,7 +287,7 @@ class FileSelectorUI:
         self.root_path = root_path
         self.on_filepath_selected = on_filepath_selected
         self.index_map = {}
-        self.instructions_frame = None        
+        self.instructions_frame = None 
 
     def collect_files(self):
         import glob
@@ -341,6 +341,7 @@ class FileSelectorUI:
 
     def create_instructions_table(self, parent):
         # Create a frame for the instructions table
+        import tkinter as tk
         self.instructions_frame = tk.Frame(parent)
         
         # Title for the instructions
@@ -449,10 +450,12 @@ class FileSelectorUI:
         self.pt.bind("<Double-Button-1>", self.edit_video_file)
         self.pt.show()
 
-        self.table_frame.mainloop()
-
         # Show the instructions table initially
         self.instructions_frame.pack(fill="x", pady=10)
+
+
+        self.table_frame.mainloop()
+
 
 
     def get_additional_processing_kwargs(self):
