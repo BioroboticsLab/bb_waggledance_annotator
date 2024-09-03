@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "waggle-dance-annotator"
+name = "dance_analysis"
 version = "0.1.0"
 description = "A tool to annotate videos with either arrows or points for bee waggle dances."
 readme = "README.md"
@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [project.scripts]
-waggle-dance-annotator = "dance_analysis:main"
+dance_analysis = "dance_analysis:main"
 
 [tool.setuptools]
 packages = { find = { where = ["."] } }
+include-package-data = true

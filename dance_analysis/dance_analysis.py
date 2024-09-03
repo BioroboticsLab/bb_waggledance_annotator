@@ -59,6 +59,7 @@ import numpy as np
 import pandas as pd
 import skimage
 
+
 try:
     import av
 except ImportError as e:
@@ -394,7 +395,6 @@ class FileSelectorUI:
             self.instructions_frame.pack(fill="x", pady=10)
 
     def show(self):
-
         import tkinter as tk
         import pandastable
 
@@ -1276,35 +1276,40 @@ def do_video(
         print("No annotations to save.")
 
 
-if __name__ == "__main__":
+
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
-        "-p", "--path", type=str, help="select path to video files"
+        "-p", "--path", type=str, help="select path to video files", default='./'
     )
     args = parser.parse_args()
 
-    def select_video_folder():
-        root = tk.Tk()
-        root.withdraw()  # Hide the main window
+    # def select_video_folder():
+    #     import tkinter as tk
+    #     from tkinter import messagebox, filedialog
+    #     root = tk.Tk()
+    #     root.withdraw()  # Hide the main window
 
-        # Show a message box before opening the file dialog
-        messagebox.showinfo("Select Directory", "Waggle dance annotator  \n\n Select a folder containing video files for annotation")
+    #     # Show a message box before opening the file dialog
+    #     messagebox.showinfo("Select Directory", "Waggle dance annotator  \n\n Select a folder containing video files for annotation")
 
-        # Open the directory selection dialog, defaulting to the current working directory
-        folder_path = filedialog.askdirectory(
-            title="Select directory",
-            initialdir=os.getcwd()  # Default to the current working directory
-        )
-        return folder_path
+    #     # Open the directory selection dialog, defaulting to the current working directory
+    #     folder_path = filedialog.askdirectory(
+    #         title="Select directory",
+    #         initialdir=os.getcwd()  # Default to the current working directory
+    #     )
+    #     return folder_path
 
-    # If no path is provided, open a dialog to select a folder
-    folder_path = args.path if args.path else select_video_folder()
+    # # If no path is provided, open a dialog to select a folder
+    # folder_path = args.path if args.path else select_video_folder()
 
-    # Ensure folder_path is valid (i.e., user didn't cancel the dialog)
-    if not folder_path:
-        print("No folder selected. Exiting.")
-        exit(1)
+    # # Ensure folder_path is valid (i.e., user didn't cancel the dialog)
+    # if not folder_path:
+    #     print("No folder selected. Exiting.")
+    #     exit(1)
+
+    folder_path = args.path
 
     ui = FileSelectorUI(
         folder_path,
@@ -1313,3 +1318,6 @@ if __name__ == "__main__":
         ),
     )
     ui.show()
+
+if __name__ == "__main__":
+    main()
