@@ -290,16 +290,22 @@ class FileSelectorUI:
         self.instructions_frame = None 
 
     def collect_files(self):
-        import glob
+        import os
         import pathlib
 
-        all_files = glob.glob(
-            os.path.join(self.root_path, "**/*.mp4"),
-            recursive=True,
+        # List of common video file extensions
+        video_extensions = (
+            '.mp4', '.avi', '.h264', '.mov', '.mkv',
+            '.mpeg', '.mpg', '.wmv', '.flv', '.m4v',
+            '.3gp', '.3g2'
         )
 
-        for filepath in all_files:
-            yield filepath, pathlib.Path(filepath).name
+        for root, dirs, files in os.walk(self.root_path):
+            for name in files:
+                # Check if the file ends with any of the video extensions (case-insensitive)
+                if name.lower().endswith(video_extensions):
+                    filepath = os.path.join(root, name)
+                    yield filepath, name
 
     def load_old_annotation_infos(self, filepath):
         annotations = Annotations.load(filepath, on_error="silent")
@@ -550,7 +556,6 @@ class VideoCaptureCache:
         self.capture = capture
         self.cache_size = cache_size
         self.cache = dict()
-        self.key_queue = []
         self.age_counter = 0
         self.current_frame = int(self.capture.get(cv.CAP_PROP_POS_FRAMES))
         self.last_read_frame = -1
@@ -559,16 +564,14 @@ class VideoCaptureCache:
         if len(self.cache) == 0:
             return
 
-        all_keys_with_ages = list((age, key)
-                                  for key, (age, _, _) in self.cache.items())
-        _, oldest = sorted(all_keys_with_ages)[0]
-
-        del self.cache[oldest]
+        # Find the oldest cached frame
+        oldest_key = min(self.cache, key=lambda k: self.cache[k][0])
+        del self.cache[oldest_key]
 
     def ensure_max_cache_size(self):
-        if len(self.cache) > self.cache_size:
+        while len(self.cache) > self.cache_size:
             if self.verbose:
-                print("Dropping item from cache ({} / {})".format(len(self.cache), self.cache_size))
+                print(f"Dropping frame from cache ({len(self.cache)} / {self.cache_size})")
             self.delete_oldest()
 
     def get_current_frame(self):
@@ -578,7 +581,6 @@ class VideoCaptureCache:
         self.current_frame = to_frame
 
     def read(self):
-
         valid, frame = None, None
 
         if self.current_frame in self.cache:
@@ -604,7 +606,6 @@ class VideoCaptureCache:
         self.cache[self.current_frame] = self.age_counter, valid, frame
         self.current_frame += 1
         self.age_counter += 1
-
         self.ensure_max_cache_size()
 
         return valid, frame
@@ -1269,7 +1270,9 @@ def do_video(
                 print("Could not fit image to window: {}".format(str(e)))
 
         cv.imshow("Frame", frame)
-
+    
+    import gc
+    gc.collect()
     cap.release()
     cv.destroyAllWindows()
 

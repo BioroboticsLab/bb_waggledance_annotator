@@ -5,3 +5,4 @@
 .DS_Store
 /dance_analysis.egg-info
 /build
+*.pyc
