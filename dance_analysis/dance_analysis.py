@@ -310,14 +310,14 @@ class FileSelectorUI:
     def load_old_annotation_infos(self, filepath):
         annotations = Annotations.load(filepath, on_error="silent")
 
-        n_waggle_starts, n_thorax_points, last_annotated_frame = 0, 0, 0
+        n_waggle_starts, n_thorax_points, max_annotated_frame = 0, 0, 0
         n_dances = 0
 
         if annotations:
             n_waggle_starts = sum(len(a.waggle_starts) for a in annotations)
             n_thorax_points = sum(len(a.raw_thorax_positions)
                                   for a in annotations)
-            last_annotated_frame = max(
+            max_annotated_frame = max(
                 int(a.get_maximum_annotated_frame_index() or 0) for a in annotations
             )
             n_dances = len(annotations)
@@ -325,7 +325,7 @@ class FileSelectorUI:
         return dict(
             n_waggle_starts=n_waggle_starts,
             n_thorax_points=n_thorax_points,
-            last_annotated_frame=last_annotated_frame,
+            max_annotated_frame=max_annotated_frame,
             n_dances=n_dances,
         )
 
@@ -922,8 +922,8 @@ def draw_bee_positions(
 
             img = cv.arrowedLine(
                 img,
-                (x - direction[0], y - direction[1]),
-                (x + direction[0], y + direction[1]),
+                (int(x - direction[0]), int(y - direction[1])),
+                (int(x + direction[0]), int(y + direction[1])),
                 colormap["waggle_start"],
                 thickness=1,
             )
@@ -1254,7 +1254,16 @@ def do_video(
         elif key in (ord("x"), 8):  # 8 is backspace.
             annotations.delete_annotations_on_frame(current_frame)
         elif key == ord("f"):
-            max_frame = annotations.get_maximum_annotated_frame_index()
+            max_frame_new = annotations.get_maximum_annotated_frame_index()
+            if old_annotations:
+                max_frame_old = max(
+                    int(a.get_maximum_annotated_frame_index() or 0) for a in old_annotations
+                )              
+            else:
+                max_frame_old = None
+            max_frames = [f for f in (max_frame_old,max_frame_new) if f is not None]
+            print(max_frames)
+            max_frame = max(max_frames) if len(max_frames)>0 else None
             if max_frame is not None:
                 move_frame_count(offset=0, target_frame=max_frame)
 
