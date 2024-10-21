@@ -1262,7 +1262,6 @@ def do_video(
             else:
                 max_frame_old = None
             max_frames = [f for f in (max_frame_old,max_frame_new) if f is not None]
-            print(max_frames)
             max_frame = max(max_frames) if len(max_frames)>0 else None
             if max_frame is not None:
                 move_frame_count(offset=0, target_frame=max_frame)
