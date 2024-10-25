@@ -799,6 +799,7 @@ def do_video(
                 )
 
         # Convert the frame to an image that can be displayed in Tkinter
+        print(frame.shape)
         frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         image = Image.fromarray(frame_rgb)
         imgtk = ImageTk.PhotoImage(image=image)
