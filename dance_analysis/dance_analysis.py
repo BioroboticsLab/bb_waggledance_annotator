@@ -439,7 +439,8 @@ class FileSelectorUI:
         for idx, (argname, description, default_value) in enumerate(
             [
                 ("start_paused", "Start Paused", 0),
-                ("use_pyav", "Use PyAV library", 0)
+                ("use_pyav", "Use PyAV library", 0),
+                ("rotate_video", "Rotate Video (90° CW)", 0)
             ]
         ):
             cb_var = tk.IntVar(value=default_value)
@@ -1040,7 +1041,8 @@ def do_video(
     debug: bool = False,
     start_paused: bool = False,
     enable_fit_image_to_window: bool = True,
-    use_pyav: bool = False
+    use_pyav: bool = False,
+    rotate_video: bool = False
 ):
     global VIDEO_FPS
     annotations = Annotations()
@@ -1165,6 +1167,10 @@ def do_video(
             continue
 
         frame = original_frame_image.copy()
+        # Rotate the frame by 90 degrees clockwise if the checkbox is checked
+        if rotate_video:
+            frame = cv.rotate(frame, cv.ROTATE_90_CLOCKWISE)
+
         frame = frame_postprocessing_pipeline.process(frame)
 
         frame = draw_template(

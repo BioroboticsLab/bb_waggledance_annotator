@@ -4,24 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dance_analysis"
-version = "0.1.0"
+version = "0.2.0"
 description = "A tool to annotate videos with either arrows or points for bee waggle dances."
 readme = "README.md"
 requires-python = ">=3.6"
 license = {text = "MIT"}
 dependencies = [
-"numpy",
-"pandas",
-"scikit-image",
-"opencv-python",
-"pyav",
-"pillow",
-"pandastable",
-"tk"
+    "numpy<2",
+    "pandas",
+    "scikit-image",
+    "opencv-python<4.10",
+    "pyav",
+    "pillow",
+    "pandastable",
+    "tk"
 ]
 
 [project.scripts]
-dance_analysis = "dance_analysis:main"
+dance_analysis = "dance_analysis.dance_analysis:main"
+dance_analysis_2 = "dance_analysis_2.main:main"
 
 [tool.setuptools]
 packages = { find = { where = ["."] } }

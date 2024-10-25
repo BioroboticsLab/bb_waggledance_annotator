@@ -6,3 +6,5 @@
 /dance_analysis.egg-info
 /build
 *.pyc
+*.ipynb
+/dance_analysis_2/bak
