@@ -335,7 +335,7 @@ def output_data(annotations: Annotations, filepath: str):
     thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
     waggle_xy = [(p.x, p.y) for p in annotations.waggle_starts]
     waggle_frames = [p.frame for p in annotations.waggle_starts]
-    waggle_directions = [(p.u, p.v) for p in annotations.waggle_starts]
+    waggle_directions = [(float(p.u), float(p.v)) for p in annotations.waggle_starts]
     data = [
         filepath,
         thorax_xy,

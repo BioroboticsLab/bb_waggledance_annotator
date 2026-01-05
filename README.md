@@ -6,9 +6,15 @@ This tool provides a GUI interface to annotate videos with the location, directi
 
 ## Installation
 
+### Conda + pip
+
 ```bash
-pip install git+https://github.com/BioroboticsLab/bb_waggledance_annotator.git
+conda create -n waggle-annotator python=3.12 pip -y
+conda activate waggle-annotator
+python -m pip install git+https://github.com/BioroboticsLab/bb_waggledance_annotator.git
 ```
+
+note:  Python 3.11 is also fine.
 
 ## Note
 The version 'dance_analysis' uses OpenCV for video annotation, and has a memory problem on Mac.  The updated version 'dance_analysis_2' fixes this problem and adds additional features, using a Tkinter interface for annotation
@@ -26,4 +32,3 @@ dance_analysis_2 -p /path/to/directory
 ```
 
 See the key mappings and instructions shown in the GUI for how to navigate the videos and mark annotations.
-

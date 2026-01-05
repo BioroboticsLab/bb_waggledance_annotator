@@ -125,14 +125,20 @@ class Annotations:
         existing_index = Annotations.get_annotation_index_for_frame(
             self.waggle_starts, frame
         )
+        if pd.isnull(u):
+            u_val = np.nan
+            v_val = np.nan
+        else:
+            u_val = float(u)
+            v_val = float(v)
         if existing_index is not None:
             self.waggle_starts[existing_index].x = x
             self.waggle_starts[existing_index].y = y
             if not pd.isnull(u):
-                self.waggle_starts[existing_index].u = u
-                self.waggle_starts[existing_index].v = v
+                self.waggle_starts[existing_index].u = u_val
+                self.waggle_starts[existing_index].v = v_val
         else:
-            self.waggle_starts.append(AnnotatedPosition(frame, x, y, u, v))
+            self.waggle_starts.append(AnnotatedPosition(frame, x, y, u_val, v_val))
 
     def update_waggle_direction(self, frame, to_x, to_y):
         existing_index = Annotations.get_annotation_index_for_frame(
@@ -151,8 +157,8 @@ class Annotations:
         if direction_norm > 0.0:
             direction /= direction_norm
 
-            self.waggle_starts[existing_index].u = direction[0]
-            self.waggle_starts[existing_index].v = direction[1]
+            self.waggle_starts[existing_index].u = float(direction[0])
+            self.waggle_starts[existing_index].v = float(direction[1])
         else:
             self.waggle_starts[existing_index].u = 0.0
             self.waggle_starts[existing_index].v = 0.0
@@ -191,12 +197,20 @@ class Annotations:
 
     @staticmethod
     def load(filepath, on_error="print"):
+        def normalize_numpy_scalars(value):
+            return re.sub(r"np\.float(?:16|32|64)?\(([^)]+)\)", r"\1", value)
+
         def parse_string_list(values):
+            def safe_literal_eval(value):
+                if isinstance(value, str):
+                    value = normalize_numpy_scalars(value)
+                return ast.literal_eval(value)
+
             if isinstance(values, list):
-                values = map(ast.literal_eval, values)
+                values = map(safe_literal_eval, values)
                 values = list(itertools.chain(*values))
             else:
-                values = ast.literal_eval(values)
+                values = safe_literal_eval(values)
             return values
 
         # Try to read in old annotated data for this video, but don't
@@ -960,7 +974,7 @@ def output_data(annotations: Annotations, filepath):
     thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
     waggle_xy = [(p.x, p.y) for p in annotations.waggle_starts]
     waggle_frames = [p.frame for p in annotations.waggle_starts]
-    waggle_directions = [(p.u, p.v) for p in annotations.waggle_starts]
+    waggle_directions = [(float(p.u), float(p.v)) for p in annotations.waggle_starts]
     data = [
         filepath,
         thorax_xy,

@@ -10,14 +10,13 @@ readme = "README.md"
 requires-python = ">=3.6"
 license = {text = "MIT"}
 dependencies = [
-    "numpy<2",
-    "pandas",
-    "scikit-image",
-    "opencv-python<4.10",
-    "pyav",
+    "numpy>=2",
+    "pandas>=2.2",
+    "scikit-image>=0.24",
+    "opencv-python>=4.10",
+    "av>=12",
     "pillow",
-    "pandastable",
-    "tk"
+    "pandastable"
 ]
 
 [project.scripts]
