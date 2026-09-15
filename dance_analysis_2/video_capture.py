@@ -368,9 +368,12 @@ def do_video(
     annotations = Annotations()
     old_annotations_list = Annotations.load(filepath)
 
-    # cap = cv.VideoCapture(filepath)
-
-    cap = cv.VideoCapture(filepath, cv.CAP_FFMPEG)
+    if platform.system() == "Darwin":
+        # This build of opencv-python on macOS has no FFMPEG backend (AVFoundation only),
+        # so forcing CAP_FFMPEG here makes VideoCapture fail to open any file.
+        cap = cv.VideoCapture(filepath)
+    else:
+        cap = cv.VideoCapture(filepath, cv.CAP_FFMPEG)
     cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
 
     total_frames = cap.get(cv.CAP_PROP_FRAME_COUNT)
