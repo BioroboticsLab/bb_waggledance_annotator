@@ -43,6 +43,7 @@ class Annotations:
     def __init__(self):
         self.raw_thorax_positions: List[AnnotatedPosition] = []
         self.waggle_starts: List[AnnotatedPosition] = []
+        self.waggle_ends: List[int] = []
 
     def update_thorax_position(self, frame: int, x: int, y: int):
         existing_index = Annotations.get_annotation_index_for_frame(
@@ -75,6 +76,17 @@ class Annotations:
         else:
             self.waggle_starts.append(AnnotatedPosition(frame, x, y, u_val, v_val))
 
+    def update_waggle_end(self, frame: int):
+        if frame not in self.waggle_ends:
+            self.waggle_ends.append(frame)
+
+    def get_paired_waggle_runs(self) -> List[Tuple[AnnotatedPosition, int]]:
+        # Starts and ends are paired positionally (1st start with 1st end, etc.),
+        # since a run's end is only ever marked as a plain frame with no position.
+        starts_sorted = sorted(self.waggle_starts, key=lambda p: p.frame)
+        ends_sorted = sorted(self.waggle_ends)
+        return list(zip(starts_sorted, ends_sorted))
+
     def update_waggle_direction(self, frame: int, to_x: int, to_y: int):
         existing_index = Annotations.get_annotation_index_for_frame(
             self.waggle_starts, frame
@@ -100,6 +112,7 @@ class Annotations:
     def clear(self):
         self.raw_thorax_positions.clear()
         self.waggle_starts.clear()
+        self.waggle_ends.clear()
 
     def calculate_min_max_thorax_distance_to_actuator(
         self, actuator: Tuple[int, int]
@@ -115,16 +128,17 @@ class Annotations:
 
     def get_maximum_annotated_frame_index(self) -> Optional[int]:
         try:
-            frame = max(
-                [
-                    max([a.frame for a in annotation_list])
-                    for annotation_list in (
-                        self.waggle_starts,
-                        self.raw_thorax_positions,
-                    )
-                    if annotation_list
-                ]
-            )
+            frame_lists = [
+                [a.frame for a in annotation_list]
+                for annotation_list in (
+                    self.waggle_starts,
+                    self.raw_thorax_positions,
+                )
+                if annotation_list
+            ]
+            if self.waggle_ends:
+                frame_lists.append(list(self.waggle_ends))
+            frame = max(max(frames) for frames in frame_lists)
         except ValueError:
             frame = None
         return frame
@@ -194,10 +208,16 @@ class Annotations:
                     all_uv = parse_string_list(all_uv)
                     all_frames = parse_string_list(all_frames)
 
-                    for (xy, frame, uv) in zip(all_xy, all_frames, all_uv): 
+                    for (xy, frame, uv) in zip(all_xy, all_frames, all_uv):
                         annotations.update_waggle_start(
                             frame, xy[0], xy[1], uv[0], uv[1]
                         )
+
+                # Older annotation files predate waggle_end tracking.
+                if "waggle_end_frames" in row_df.columns:
+                    for (all_frames,) in row_df[["waggle_end_frames"]].itertuples(index=False):
+                        for frame in parse_string_list(all_frames):
+                            annotations.update_waggle_end(frame)
 
                 all_annotations.append(annotations)
 
@@ -219,6 +239,8 @@ class Annotations:
             )
             if idx is not None:
                 del annotation_list[idx]
+        if current_frame in self.waggle_ends:
+            self.waggle_ends.remove(current_frame)
 
 
 # Utility functions that might be needed

@@ -41,12 +41,14 @@ class FileSelectorUI:
         annotations_list = Annotations.load(filepath, on_error="silent")
 
         n_waggle_starts = 0
+        n_waggle_ends = 0
         n_thorax_points = 0
         max_annotated_frame = 0
         n_dances = 0
 
         if annotations_list:
             n_waggle_starts = sum(len(a.waggle_starts) for a in annotations_list)
+            n_waggle_ends = sum(len(a.waggle_ends) for a in annotations_list)
             n_thorax_points = sum(len(a.raw_thorax_positions) for a in annotations_list)
             max_annotated_frame = max(
                 int(a.get_maximum_annotated_frame_index() or 0) for a in annotations_list
@@ -55,6 +57,7 @@ class FileSelectorUI:
 
         return dict(
             n_waggle_starts=n_waggle_starts,
+            n_waggle_ends=n_waggle_ends,
             n_thorax_points=n_thorax_points,
             max_annotated_frame=max_annotated_frame,
             n_dances=n_dances,
@@ -122,6 +125,7 @@ class FileSelectorUI:
         instructions = [
             ("Left click", "Create new arrow or update existing one (hold pressed down to specify direction)."),
             ("Right click", "Create new point or update existing one."),
+            ("e", "Mark current frame as the end of a waggle run."),
             ("Space", "Pause/unpause playback."),
             ("a", "Go one frame back in time."),
             ("d", "Go one frame forward in time."),

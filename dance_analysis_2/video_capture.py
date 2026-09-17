@@ -238,12 +238,14 @@ def draw_bee_positions(
         thorax_position=(0, 255, 0),
         thorax_position_100_frames=(0, 0, 255),
         waggle_start=(0, 255, 255),
+        waggle_end=(255, 0, 255),
     )
     if is_old_annotations:
         colormap = dict(
             thorax_position=(200, 200, 200),
             thorax_position_100_frames=(200, 200, 255),
             waggle_start=(200, 255, 255),
+            waggle_end=(255, 200, 255),
         )
 
     if annotations.raw_thorax_positions:
@@ -318,6 +320,33 @@ def draw_bee_positions(
                 thickness=1,
             )
 
+    paired_runs = annotations.get_paired_waggle_runs()
+    if paired_runs:
+        last_waggle_end_frame = max(end_frame for _, end_frame in paired_runs)
+
+    for start_position, end_frame in paired_runs:
+        is_last_marker = end_frame == last_waggle_end_frame
+        is_in_current_frame = current_frame == end_frame
+
+        if (not is_last_marker and not is_in_current_frame) and hide_past_annotations:
+            continue
+
+        # A waggle run's position barely moves, so the end marker is drawn
+        # at its paired start's position rather than tracking its own x, y.
+        x, y = start_position.x, start_position.y
+        if frame_postprocessing_pipeline is not None:
+            x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
+
+        size = 6 if not is_in_current_frame else 12
+        img = cv.drawMarker(
+            img,
+            (int(x), int(y)),
+            colormap["waggle_end"],
+            markerType=cv.MARKER_SQUARE,
+            markerSize=size,
+            thickness=2,
+        )
+
     return img
 
 
@@ -329,12 +358,14 @@ def output_data(annotations: Annotations, filepath: str):
         "thorax_frames",
         "waggle_start_positions",
         "waggle_start_frames",
+        "waggle_end_frames",
         "waggle_directions",
     ]
     thorax_xy = [(p.x, p.y) for p in annotations.raw_thorax_positions]
     thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
     waggle_xy = [(p.x, p.y) for p in annotations.waggle_starts]
     waggle_frames = [p.frame for p in annotations.waggle_starts]
+    waggle_end_frames = list(annotations.waggle_ends)
     waggle_directions = [(float(p.u), float(p.v)) for p in annotations.waggle_starts]
     data = [
         filepath,
@@ -342,6 +373,7 @@ def output_data(annotations: Annotations, filepath: str):
         thorax_frames,
         waggle_xy,
         waggle_frames,
+        waggle_end_frames,
         waggle_directions,
     ]
 
@@ -550,6 +582,8 @@ def do_video(
                 )
         elif key == "x" or key == "backspace":
             annotations.delete_annotations_on_frame(current_frame)
+        elif key == "e":
+            annotations.update_waggle_end(current_frame)
         elif key == "f":
             max_frame_new = annotations.get_maximum_annotated_frame_index()
             max_frames = []
