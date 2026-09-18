@@ -31,4 +31,13 @@ By default the tool opens the current directory to select videos for annotation.
 dance_analysis_2 -p /path/to/directory
 ```
 
+### How to annotate a waggle run
+
+Each waggle run is marked in two steps, in this order:
+
+1. **Left-click** on the bee's thorax at the position where the waggle run starts, holding the mouse down and dragging before releasing to set its direction. This records the run's start position, start frame, and direction.
+2. **Right-click** on the bee's thorax at the position where the waggle run ends. This is saved in the CSV as a "thorax position" (`thorax_positions` / `thorax_frames` columns) for historical reasons, but it functions as that run's **end position and end frame**.
+
+The tool enforces this order: you must place a start before you can place an end, and you can't start a new run until the previous run's end has been marked. If you try to do it out of order, a pop-up tells you what to do next (e.g. "place the waggle start position and direction first").
+
 See the key mappings and instructions shown in the GUI for how to navigate the videos and mark annotations.
