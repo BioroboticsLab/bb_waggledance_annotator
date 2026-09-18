@@ -7,7 +7,7 @@ import os
 import csv
 import platform
 import tkinter as tk
-from tkinter import HORIZONTAL
+from tkinter import HORIZONTAL, messagebox
 from PIL import Image, ImageTk
 import sys
 import time
@@ -368,9 +368,12 @@ def do_video(
     annotations = Annotations()
     old_annotations_list = Annotations.load(filepath)
 
-    # cap = cv.VideoCapture(filepath)
-
-    cap = cv.VideoCapture(filepath, cv.CAP_FFMPEG)
+    if platform.system() == "Darwin":
+        # This build of opencv-python on macOS has no FFMPEG backend (AVFoundation only),
+        # so forcing CAP_FFMPEG here makes VideoCapture fail to open any file.
+        cap = cv.VideoCapture(filepath)
+    else:
+        cap = cv.VideoCapture(filepath, cv.CAP_FFMPEG)
     cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
 
     total_frames = cap.get(cv.CAP_PROP_FRAME_COUNT)
@@ -588,8 +591,24 @@ def do_video(
 
         is_right_click = (event.num == 3) if sys.platform != "darwin" else (event.num == 2)  # Adjust for Mac vs Windows/Linux
 
+        # A waggle run must be marked as start (position + direction) first,
+        # then end (thorax position + frame), alternating 1:1 with no
+        # overlap. This makes each thorax position unambiguously the end
+        # marker of the waggle_start immediately preceding it.
+        is_awaiting_end_marker = len(annotations.waggle_starts) > len(annotations.raw_thorax_positions)
+
         if event.num == 1:  # Left-click
             if event.type == tk.EventType.ButtonPress:
+                is_new_start = Annotations.get_annotation_index_for_frame(
+                    annotations.waggle_starts, current_frame
+                ) is None
+                if is_new_start and is_awaiting_end_marker:
+                    messagebox.showwarning(
+                        "End position missing",
+                        "Please place the thorax position and frame as the "
+                        "end position and frame before starting a new waggle run.",
+                    )
+                    return
                 annotations.update_waggle_start(current_frame, x_video, y_video)
                 is_in_draw_vector_mode = True
                 if not is_in_pause_mode:
@@ -598,8 +617,17 @@ def do_video(
                 is_in_draw_vector_mode = False
                 annotations.update_waggle_direction(current_frame, x_video, y_video)
 
-        elif is_right_click:  # Right-click 
+        elif is_right_click:  # Right-click
             if event.type == tk.EventType.ButtonPress:
+                is_new_thorax = Annotations.get_annotation_index_for_frame(
+                    annotations.raw_thorax_positions, current_frame
+                ) is None
+                if is_new_thorax and not is_awaiting_end_marker:
+                    messagebox.showwarning(
+                        "Start position missing",
+                        "Please place the waggle start position and direction first.",
+                    )
+                    return
                 annotations.update_thorax_position(current_frame, x_video, y_video)
 
         elif event.type == tk.EventType.Motion:
