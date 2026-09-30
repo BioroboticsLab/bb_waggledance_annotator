@@ -409,7 +409,7 @@ def do_video(
 
      # Create a Toplevel window for the video player
     video_window = tk.Toplevel()
-    video_window.title("Video Annotation Tool")
+    video_window.title(f"Video Annotation Tool - {os.path.basename(filepath)} - {video_fps:.2f} FPS")
     # video_window.resizable(False,False)  # disable default resizing in order to keep the aspect
 
     # Create the widgets first
@@ -799,6 +799,10 @@ def do_video(
         if not has_valid_frame:
             move_frame_count(-1)
             is_in_pause_mode = True
+            # Still reschedule, otherwise the update loop dies here and the
+            # display never refreshes again, even if the frame slider is moved.
+            delay = int(1000 / (speed_scale.get() if speed_scale.get() > 0 else 1))
+            video_window.after(delay, update_frame)
             return
 
         # frame = original_frame_image.copy()
