@@ -231,21 +231,17 @@ def draw_bee_positions(
     img: np.ndarray,
     annotations: Annotations,
     current_frame: int,
-    is_old_annotations: bool = False,
     hide_past_annotations: bool = False,
     frame_postprocessing_pipeline: Optional[FramePostprocessingPipeline] = None
 ) -> np.ndarray:
+    # Markers from a previous session (old_annotations_list) use the same
+    # vivid colors as live annotation - a muted/grey palette made them hard
+    # to spot against already-grey/low-contrast footage.
     colormap = dict(
         thorax_position=(0, 255, 0),
         thorax_position_100_frames=(0, 0, 255),
         waggle_start=(0, 255, 255),
     )
-    if is_old_annotations:
-        colormap = dict(
-            thorax_position=(200, 200, 200),
-            thorax_position_100_frames=(200, 200, 255),
-            waggle_start=(200, 255, 255),
-        )
 
     # Pair each waggle start with its corresponding end positionally (sorted
     # by frame, zipped 1:1) - the same pairing the input ordering-constraint
@@ -850,7 +846,6 @@ def do_video(
                     frame,
                     old_annotations,
                     current_frame=current_frame,
-                    is_old_annotations=True,
                     frame_postprocessing_pipeline=frame_postprocessing_pipeline
                 )
 
