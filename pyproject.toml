@@ -22,6 +22,7 @@ dependencies = [
 [project.scripts]
 dance_analysis = "dance_analysis.dance_analysis:main"
 dance_analysis_2 = "dance_analysis_2.main:main"
+dance_video_splitter = "dance_analysis_2.video_splitter:main"
 
 [tool.setuptools]
 packages = { find = { where = ["."] } }

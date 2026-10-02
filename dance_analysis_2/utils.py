@@ -2,9 +2,30 @@
 
 import os
 import csv
+import platform
 import cv2 as cv
 import numpy as np
 from typing import Tuple
+
+
+def open_video_capture(filepath: str) -> cv.VideoCapture:
+    """
+    Opens a video file with the video-capture backend appropriate for the
+    current platform.
+
+    On macOS, opencv-python builds commonly ship without an FFMPEG backend
+    (AVFoundation only), so forcing CAP_FFMPEG there makes VideoCapture fail
+    to open any file. Other platforms keep CAP_FFMPEG explicitly.
+
+    Args:
+        filepath (str): The path to the input video file.
+
+    Returns:
+        cv.VideoCapture: An opened (or attempted) video capture object.
+    """
+    if platform.system() == "Darwin":
+        return cv.VideoCapture(filepath)
+    return cv.VideoCapture(filepath, cv.CAP_FFMPEG)
 
 
 def get_output_filename(filepath: str) -> str:

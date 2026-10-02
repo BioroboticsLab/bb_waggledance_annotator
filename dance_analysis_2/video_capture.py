@@ -18,6 +18,7 @@ from .utils import (
     fit_image_to_aspect_ratio,
     get_output_filename,
     get_csv_writer_options,
+    open_video_capture,
 )
 
 try:
@@ -246,10 +247,41 @@ def draw_bee_positions(
             waggle_start=(200, 255, 255),
         )
 
+    # Pair each waggle start with its corresponding end positionally (sorted
+    # by frame, zipped 1:1) - the same pairing the input ordering-constraint
+    # already enforces: a start, then its end, alternating with no overlap.
+    # At most the last start can be unpaired (still awaiting its end).
+    sorted_starts = sorted(annotations.waggle_starts, key=lambda p: p.frame)
+    sorted_thorax = sorted(annotations.raw_thorax_positions, key=lambda p: p.frame)
+    n_paired = min(len(sorted_starts), len(sorted_thorax))
+    paired_runs = list(zip(sorted_starts[:n_paired], sorted_thorax[:n_paired]))
+    unpaired_starts = sorted_starts[n_paired:]
+    unpaired_thorax = sorted_thorax[n_paired:]  # atypical/legacy leftovers, if any
+
     if annotations.raw_thorax_positions:
         last_marker_frame = max(p.frame for p in annotations.raw_thorax_positions)
 
-    for position in annotations.raw_thorax_positions:
+    # Thorax/end markers: only visible while current_frame is within the
+    # paired run's [start, end] range.
+    for start_position, end_position in paired_runs:
+        if not (start_position.frame <= current_frame <= end_position.frame):
+            continue
+
+        x, y = end_position.x, end_position.y
+        if frame_postprocessing_pipeline is not None:
+            x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
+
+        is_in_current_frame = current_frame == end_position.frame
+        radius = 5 if not is_in_current_frame else 10
+        img = cv.circle(
+            img, (int(x), int(y)), radius, colormap["thorax_position"], 2
+        )
+
+    # Any thorax positions left over without a matching start (shouldn't
+    # happen going forward given the input ordering-constraint, but can occur
+    # in older/atypical annotation files) keep the old always-ish-visible
+    # behavior, so legacy data isn't silently hidden.
+    for position in unpaired_thorax:
         is_last_marker = position.frame == last_marker_frame
         is_in_current_frame = current_frame == position.frame
 
@@ -257,17 +289,14 @@ def draw_bee_positions(
             continue
 
         x, y = position.x, position.y
-        # Transform video coordinates to screen coordinates
         if frame_postprocessing_pipeline is not None:
             x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
-
 
         radius = 5 if not is_in_current_frame else 10
         img = cv.circle(
             img, (int(x), int(y)), radius, colormap["thorax_position"], 2
         )
 
-        # Highlight the last thorax marking at the 100 frames mark
         if is_last_marker and current_frame > position.frame:
             size = radius
             if position.frame == current_frame - 100:
@@ -280,26 +309,15 @@ def draw_bee_positions(
                 markerSize=size,
             )
 
-    if annotations.waggle_starts:
-        last_waggle_start_frame = max(p.frame for p in annotations.waggle_starts)
-
-    for position in annotations.waggle_starts:
-        is_last_marker = position.frame == last_waggle_start_frame
-        is_in_current_frame = current_frame == position.frame
-
-        if (not is_last_marker and not is_in_current_frame) and hide_past_annotations:
-            continue
-
+    def draw_waggle_start(position):
         x, y = position.x, position.y
         if frame_postprocessing_pipeline is not None:
             x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
 
-
-
-
+        is_in_current_frame = current_frame == position.frame
         radius = 2 if not is_in_current_frame else 5
         length = 25 if not is_in_current_frame else 50
-        img = cv.circle(
+        img_local = cv.circle(
             img, (int(x), int(y)), radius, colormap["waggle_start"], 2
         )
 
@@ -310,13 +328,24 @@ def draw_bee_positions(
             direction = (direction / np.linalg.norm(direction)) * length
             direction = direction.astype(int)
 
-            img = cv.arrowedLine(
-                img,
+            img_local = cv.arrowedLine(
+                img_local,
                 (int(x - direction[0]), int(y - direction[1])),
                 (int(x + direction[0]), int(y + direction[1])),
                 colormap["waggle_start"],
                 thickness=1,
             )
+        return img_local
+
+    # Waggle start markers: same [start, end] visibility rule when paired.
+    for start_position, end_position in paired_runs:
+        if not (start_position.frame <= current_frame <= end_position.frame):
+            continue
+        img = draw_waggle_start(start_position)
+
+    # A start still awaiting its end stays visible - nothing to bound it to yet.
+    for position in unpaired_starts:
+        img = draw_waggle_start(position)
 
     return img
 
@@ -368,12 +397,7 @@ def do_video(
     annotations = Annotations()
     old_annotations_list = Annotations.load(filepath)
 
-    if platform.system() == "Darwin":
-        # This build of opencv-python on macOS has no FFMPEG backend (AVFoundation only),
-        # so forcing CAP_FFMPEG here makes VideoCapture fail to open any file.
-        cap = cv.VideoCapture(filepath)
-    else:
-        cap = cv.VideoCapture(filepath, cv.CAP_FFMPEG)
+    cap = open_video_capture(filepath)
     cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
 
     total_frames = cap.get(cv.CAP_PROP_FRAME_COUNT)
