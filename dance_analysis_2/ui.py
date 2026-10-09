@@ -8,6 +8,7 @@ import pandastable
 from typing import Callable, Dict, List, Tuple
 from .annotations import Annotations
 from .utils import get_output_filename
+from .theme import BG, FG, ACCENT
 
 class FileSelectorUI:
     def __init__(self, root, root_path: str, on_filepath_selected: Callable):
@@ -90,18 +91,19 @@ class FileSelectorUI:
 
     def create_instructions_table(self, parent):
         # Create a frame for the instructions table
-        self.instructions_frame = tk.Frame(parent)
+        self.instructions_frame = tk.Frame(parent, bg=BG)
 
         # Title for the instructions
         title_label = tk.Label(
             self.instructions_frame,
             text="Instructions and Key Mappings",
-            font=('Arial', 14, 'bold')
+            font=('Arial', 14, 'bold'),
+            bg=BG, fg=FG,
         )
         title_label.pack(pady=(5, 10))
 
         # Table Frame
-        table_frame = tk.Frame(self.instructions_frame)
+        table_frame = tk.Frame(self.instructions_frame, bg=BG)
         table_frame.pack(fill="x")
 
         # Headers
@@ -111,8 +113,8 @@ class FileSelectorUI:
                 table_frame,
                 text=header,
                 font=('Arial', 12, 'bold'),
-                borderwidth=1,
-                relief="solid",
+                borderwidth=0,
+                bg=ACCENT, fg="#1a1a1a",
                 padx=5,
                 pady=5
             )
@@ -136,18 +138,20 @@ class FileSelectorUI:
             ("c", "Switch through different contrast improvement methods."),
             ("r", "Delete all current annotations and go to start of video."),
             ("q", "Save current annotations and close video."),
-            ("x", "Undo the most recently placed annotation (wherever it is)."),
+            ("n", "Start a fresh dance (video stays open). Nothing is saved to disk until 'q'."),
+            ("x", "Undo whatever happened most recently - a marker, or 'n' itself."),
             ("backspace", "Delete annotations on the current frame."),
         ]
 
         # Fill the table with instructions
         for row_num, (key, desc) in enumerate(instructions, start=1):
+            row_bg = BG if row_num % 2 else "#333333"
             key_label = tk.Label(
                 table_frame,
                 text=key,
                 font=('Arial', 12),
-                borderwidth=1,
-                relief="solid",
+                borderwidth=0,
+                bg=row_bg, fg=FG,
                 padx=5,
                 pady=5
             )
@@ -156,8 +160,8 @@ class FileSelectorUI:
                 table_frame,
                 text=desc,
                 font=('Arial', 12),
-                borderwidth=1,
-                relief="solid",
+                borderwidth=0,
+                bg=row_bg, fg=FG,
                 padx=5,
                 pady=5
             )
@@ -178,6 +182,7 @@ class FileSelectorUI:
         self.root.deiconify()  # Show the root window
         self.root.title("Available Videos")
         self.root.geometry("800x1000")
+        self.root.configure(bg=BG)
         self.index_map = {}
 
         table_data = []
@@ -198,15 +203,22 @@ class FileSelectorUI:
 
         # Create the instructions table and toggle button
         self.create_instructions_table(self.root)  # first create the table object
-        toggle_button = tk.Button(
+        # A plain tk.Button ignores bg on macOS's native (Aqua) theme, so a
+        # styled Label bound to a click is used instead - see the splitter's
+        # Export button for the same fix.
+        toggle_button = tk.Label(
             self.root,
             text="Show/Hide Instructions",
-            command=self.toggle_instructions
+            bg=ACCENT, fg="#1a1a1a",
+            padx=10, pady=4,
+            relief=tk.RAISED,
+            cursor="hand2",
         )
         toggle_button.pack(pady=10)
+        toggle_button.bind("<Button-1>", lambda event: self.toggle_instructions())
 
         # Create the checkbox frame
-        self.checkbox_frame = tk.Frame(self.root)
+        self.checkbox_frame = tk.Frame(self.root, bg=BG)
         self.checkbox_frame.pack(fill="x", expand=True)
 
         # Create checkboxes for additional options
@@ -221,13 +233,17 @@ class FileSelectorUI:
             cb = tk.Checkbutton(
                 self.checkbox_frame,
                 text=description,
-                variable=cb_var
+                variable=cb_var,
+                bg=BG, fg=FG,
+                selectcolor="#1a1a1a",
+                activebackground=BG, activeforeground=FG,
+                highlightthickness=0,
             )
             cb.pack(padx=5, pady=15, side=tk.LEFT)
             self.checkboxes.append((argname, cb_var))
 
         # Create the table frame
-        self.table_frame = tk.Frame(self.root)
+        self.table_frame = tk.Frame(self.root, bg=BG)
         self.table_frame.pack(fill="both", expand=True)
 
         # Create the table using pandastable

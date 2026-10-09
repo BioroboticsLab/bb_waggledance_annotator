@@ -43,10 +43,6 @@ class Annotations:
     def __init__(self):
         self.raw_thorax_positions: List[AnnotatedPosition] = []
         self.waggle_starts: List[AnnotatedPosition] = []
-        # ("waggle_start" | "thorax_position", frame), in the order placed -
-        # lets undo_last_action() undo the most recent one regardless of
-        # where the playhead currently is.
-        self.action_history: List[Tuple[str, int]] = []
 
     def update_thorax_position(self, frame: int, x: int, y: int):
         existing_index = Annotations.get_annotation_index_for_frame(
@@ -57,7 +53,6 @@ class Annotations:
             self.raw_thorax_positions[existing_index].y = y
         else:
             self.raw_thorax_positions.append(AnnotatedPosition(frame, x, y))
-            self.action_history.append(("thorax_position", frame))
 
     def update_waggle_start(
         self, frame: int, x: int, y: int, u: float = np.nan, v: float = np.nan
@@ -79,7 +74,6 @@ class Annotations:
                 self.waggle_starts[existing_index].v = v_val
         else:
             self.waggle_starts.append(AnnotatedPosition(frame, x, y, u_val, v_val))
-            self.action_history.append(("waggle_start", frame))
 
     def update_waggle_direction(self, frame: int, to_x: int, to_y: int):
         existing_index = Annotations.get_annotation_index_for_frame(
@@ -106,7 +100,6 @@ class Annotations:
     def clear(self):
         self.raw_thorax_positions.clear()
         self.waggle_starts.clear()
-        self.action_history.clear()
 
     def calculate_min_max_thorax_distance_to_actuator(
         self, actuator: Tuple[int, int]
@@ -226,27 +219,6 @@ class Annotations:
             )
             if idx is not None:
                 del annotation_list[idx]
-        self.action_history = [
-            (kind, frame) for (kind, frame) in self.action_history
-            if frame != current_frame
-        ]
-
-    def undo_last_action(self) -> Optional[int]:
-        """
-        Removes the most recently placed annotation (start or end),
-        regardless of where the playhead currently is. Returns the frame it
-        was removed from, or None if there was nothing to undo.
-        """
-        if not self.action_history:
-            return None
-        kind, frame = self.action_history.pop()
-        annotation_list = (
-            self.waggle_starts if kind == "waggle_start" else self.raw_thorax_positions
-        )
-        idx = Annotations.get_annotation_index_for_frame(annotation_list, frame)
-        if idx is not None:
-            del annotation_list[idx]
-        return frame
 
 
 # Utility functions that might be needed

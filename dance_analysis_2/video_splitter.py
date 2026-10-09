@@ -20,6 +20,10 @@ import cv2 as cv
 from PIL import Image, ImageTk
 
 from .utils import open_video_capture
+from .theme import BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_RED, PLAYHEAD
+from .timeline_widgets import (
+    draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
+)
 
 VIDEO_EXTENSIONS = (
     ".mp4", ".avi", ".h264", ".mov", ".mkv",
@@ -234,43 +238,42 @@ def do_split_tool(root: tk.Tk, filepath: str):
 
     win = tk.Toplevel(root)
     win.title(f"Video Splitter - {os.path.basename(filepath)} - {video_fps:.2f} FPS")
+    win.configure(bg=BG)
 
     video_panel = tk.Label(win, bg="black")
     video_panel.pack(expand=True, fill="both")
-
-    # The scale still operates on frame indices internally (needed for exact
-    # per-frame seeking/export), but the displayed value is time-based, since
-    # a raw frame number isn't meaningfully comparable across videos loaded
-    # at different fps.
-    frame_scale = tk.Scale(
-        win, from_=0, to=max(total_frames - 1, 0), orient=tk.HORIZONTAL,
-        label="Position", length=900, showvalue=0,
-    )
-    frame_scale.pack(fill=tk.X, padx=10)
 
     time_label = tk.Label(
         win,
         text=f"{format_display_time(0)} / {format_display_time(total_duration_s)}",
         font=("TkDefaultFont", 12, "bold"),
+        bg=BG, fg=FG,
     )
     time_label.pack(fill=tk.X, padx=10)
 
-    status_label = tk.Label(win, text="Scanning keyframes for accurate-cut preview...", fg="gray")
+    status_label = tk.Label(
+        win, text="Scanning keyframes for accurate-cut preview...", bg=BG, fg=FG_MUTED
+    )
     status_label.pack(fill=tk.X, padx=10)
 
-    play_state_label = tk.Label(win, text="Paused (space to play)", fg="gray")
+    play_state_label = tk.Label(win, text="Paused (space to play)", bg=BG, fg=FG_MUTED)
     play_state_label.pack(fill=tk.X, padx=10)
 
-    zoom_label = tk.Label(win, text="Zoom: 1.0x (scroll over video to zoom)", fg="gray")
+    zoom_label = tk.Label(
+        win, text="Zoom: 1.0x (scroll over video to zoom)", bg=BG, fg=FG_MUTED
+    )
     zoom_label.pack(fill=tk.X, padx=10)
 
-    timeline_canvas = tk.Canvas(win, height=50, bg="#1a1a1a", highlightthickness=0)
+    timeline_canvas = tk.Canvas(win, height=50 + LABEL_HEIGHT, bg=BG_PANEL, highlightthickness=0)
     timeline_canvas.pack(fill=tk.X, padx=10, pady=(4, 10))
 
-    controls_frame = tk.Frame(win)
+    controls_frame = tk.Frame(win, bg=BG)
     controls_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
 
-    marker_listbox = tk.Listbox(win, height=6)
+    marker_listbox = tk.Listbox(
+        win, height=6, bg=BG_PANEL, fg=FG,
+        highlightthickness=0, selectbackground=ACCENT, selectforeground="#1a1a1a",
+    )
     marker_listbox.pack(fill=tk.X, padx=10, pady=(0, 10))
 
     # ---- helpers -----------------------------------------------------
@@ -287,21 +290,27 @@ def do_split_tool(root: tk.Tk, filepath: str):
     def redraw_timeline():
         timeline_canvas.delete("all")
         w = timeline_canvas.winfo_width() or 900
-        h = timeline_canvas.winfo_height() or 50
+        h = timeline_canvas.winfo_height() or (50 + LABEL_HEIGHT)
+        marker_y = LABEL_HEIGHT + (h - LABEL_HEIGHT - RULER_HEIGHT) / 2
+        draw_frame_ruler(timeline_canvas, w, h, total_frames - 1, frame_to_x)
 
         for frame in state["split_frames"]:
             mx = frame_to_x(frame, w)
-            timeline_canvas.create_line(mx, 0, mx, h, fill="#ff8800", width=1, dash=(3, 2))
             if state["keyframes_ready"]:
                 t = frame / video_fps
                 snapped_t = nearest_keyframe_at_or_before(state["keyframe_timestamps"], t)
                 if snapped_t is not None:
                     snapped_frame = int(round(snapped_t * video_fps))
                     sx = frame_to_x(snapped_frame, w)
-                    timeline_canvas.create_line(sx, 0, sx, h, fill="#ff3333", width=2)
+                    if sx != mx:
+                        timeline_canvas.create_line(
+                            mx, marker_y, sx, marker_y, fill="#5a5a5a", width=1, dash=(2, 2)
+                        )
+                    draw_diamond_marker(timeline_canvas, sx, marker_y, ACCENT_RED)
+            draw_diamond_marker(timeline_canvas, mx, marker_y, ACCENT, size=4)
 
         px = frame_to_x(state["current_frame"], w)
-        timeline_canvas.create_line(px, 0, px, h, fill="white", width=2)
+        draw_playhead(timeline_canvas, px, LABEL_HEIGHT, h - RULER_HEIGHT, frame=state["current_frame"])
 
     def show_frame():
         # A manual seek (cap.set) is expensive: it has to locate the nearest
@@ -338,23 +347,7 @@ def do_split_tool(root: tk.Tk, filepath: str):
     def seek_to_frame(frame: int):
         frame = min(max(int(frame), 0), max(total_frames - 1, 0))
         state["current_frame"] = frame
-        # Detach the command callback while we set the scale programmatically.
-        # Tk's Scale invokes 'command' asynchronously (queued, not inline), so
-        # a flag reset right after .set() doesn't reliably suppress it - fully
-        # unbinding does, since there's then nothing registered to fire.
-        frame_scale.config(command="")
-        frame_scale.set(frame)
-        frame_scale.config(command=on_frame_scale_change)
         show_frame()
-
-    def on_frame_scale_change(value):
-        new_frame = int(float(value))
-        if state["is_playing"]:
-            toggle_play()  # manual scrub pauses playback
-        if new_frame != state["current_frame"]:
-            seek_to_frame(new_frame)
-
-    frame_scale.config(command=on_frame_scale_change)
 
     target_frame_interval_ms = 1000 / video_fps
 
@@ -364,7 +357,7 @@ def do_split_tool(root: tk.Tk, filepath: str):
         next_frame = state["current_frame"] + 1
         if next_frame >= total_frames:
             state["is_playing"] = False
-            play_state_label.config(text="Paused (space to play)", fg="gray")
+            play_state_label.config(text="Paused (space to play)", fg=FG_MUTED)
             return
         cycle_start = time.time()
         seek_to_frame(next_frame)
@@ -377,16 +370,19 @@ def do_split_tool(root: tk.Tk, filepath: str):
     def toggle_play(event=None):
         state["is_playing"] = not state["is_playing"]
         if state["is_playing"]:
-            play_state_label.config(text="Playing (space to pause)", fg="#2e7d32")
+            play_state_label.config(text="Playing (space to pause)", fg=ACCENT)
             advance_playback()
         else:
-            play_state_label.config(text="Paused (space to play)", fg="gray")
+            play_state_label.config(text="Paused (space to play)", fg=FG_MUTED)
 
-    def on_timeline_click(event):
+    def on_timeline_seek(event):
+        if state["is_playing"]:
+            toggle_play()  # manual scrub pauses playback
         w = timeline_canvas.winfo_width()
         seek_to_frame(x_to_frame(event.x, w))
 
-    timeline_canvas.bind("<Button-1>", on_timeline_click)
+    timeline_canvas.bind("<Button-1>", on_timeline_seek)
+    timeline_canvas.bind("<B1-Motion>", on_timeline_seek)  # click-and-drag to scrub
 
     def on_mouse_wheel(event):
         if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
@@ -513,7 +509,8 @@ def do_split_tool(root: tk.Tk, filepath: str):
 
         export_win = tk.Toplevel(win)
         export_win.title("Exporting")
-        progress_label = tk.Label(export_win, text="", padx=20, pady=20)
+        export_win.configure(bg=BG)
+        progress_label = tk.Label(export_win, text="", padx=20, pady=20, bg=BG, fg=FG)
         progress_label.pack()
         export_win.update()
 
@@ -590,8 +587,8 @@ def do_split_tool(root: tk.Tk, filepath: str):
     export_button = tk.Label(
         controls_frame,
         text="Export segments",
-        bg="#2e7d32",
-        fg="white",
+        bg=ACCENT,
+        fg="#1a1a1a",
         padx=10,
         pady=4,
         relief=tk.RAISED,
@@ -602,8 +599,8 @@ def do_split_tool(root: tk.Tk, filepath: str):
 
     legend = tk.Label(
         win,
-        text="orange dashed = where you clicked   |   red solid = actual cut point (nearest keyframe)",
-        fg="gray",
+        text="orange diamond = where you clicked   |   red diamond = actual cut point (nearest keyframe)",
+        bg=BG, fg=FG_MUTED,
     )
     legend.pack(fill=tk.X, padx=10, pady=(0, 6))
 
@@ -621,7 +618,7 @@ def do_split_tool(root: tk.Tk, filepath: str):
             "x: undo last marker   ·   "
             "double-click a marker below to remove it"
         ),
-        fg="gray",
+        bg=BG, fg=FG_MUTED,
     )
     keys_legend.pack(fill=tk.X, padx=10, pady=(0, 6))
 

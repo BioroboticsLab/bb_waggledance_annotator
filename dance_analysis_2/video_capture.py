@@ -20,6 +20,13 @@ from .utils import (
     get_csv_writer_options,
     open_video_capture,
 )
+from .theme import (
+    BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_BLUE, PLAYHEAD,
+    ACCENT_BGR, ACCENT_BLUE_BGR, ACCENT_RED_BGR,
+)
+from .timeline_widgets import (
+    draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
+)
 
 try:
     import av
@@ -238,9 +245,9 @@ def draw_bee_positions(
     # vivid colors as live annotation - a muted/grey palette made them hard
     # to spot against already-grey/low-contrast footage.
     colormap = dict(
-        thorax_position=(0, 255, 0),
-        thorax_position_100_frames=(0, 0, 255),
-        waggle_start=(0, 255, 255),
+        thorax_position=ACCENT_BLUE_BGR,
+        thorax_position_100_frames=ACCENT_RED_BGR,
+        waggle_start=ACCENT_BGR,
     )
 
     # Pair each waggle start with its corresponding end positionally (sorted
@@ -391,6 +398,15 @@ def do_video(
     rotate_video: bool = False
 ):
     annotations = Annotations()
+    # Dances finished via 'n' within this session - not written to disk yet,
+    # all of them get saved together as separate rows when the video closes.
+    saved_dances: List[Annotations] = []
+    # One linear undo stack spanning the whole session: marker placements
+    # AND 'n' dance-boundaries are pushed here in true chronological order,
+    # so 'x' always undoes whatever happened most recently, including 'n'
+    # itself. Entries: ("waggle_start" | "thorax_position", frame) or
+    # ("new_dance", None).
+    session_action_history: List[Tuple[str, Optional[int]]] = []
     old_annotations_list = Annotations.load(filepath)
 
     cap = open_video_capture(filepath)
@@ -430,7 +446,13 @@ def do_video(
      # Create a Toplevel window for the video player
     video_window = tk.Toplevel()
     video_window.title(f"Video Annotation Tool - {os.path.basename(filepath)} - {video_fps:.2f} FPS")
+    video_window.configure(bg=BG)
     # video_window.resizable(False,False)  # disable default resizing in order to keep the aspect
+
+    scale_style = dict(
+        bg=BG, fg=FG, troughcolor=BG_PANEL,
+        highlightbackground=BG, highlightthickness=0, activebackground=ACCENT,
+    )
 
     # Create the widgets first
     speed_scale = tk.Scale(
@@ -440,25 +462,17 @@ def do_video(
         orient=tk.HORIZONTAL,
         label="Speed (FPS)",
         length=600,
+        **scale_style,
     )
     speed_scale.set(int(video_fps))  # Set initial speed to video FPS
     speed_scale.pack()
 
-    frame_scale = tk.Scale(
-        video_window,
-        from_=0,
-        to=int(total_frames - 1),
-        orient=tk.HORIZONTAL,
-        label="Frame",
-        length=800,
-    )
-    frame_scale.set(0)  # Start at the first frame
-    frame_scale.pack()
 
-    # Timeline strip: tick marks for every placed waggle_start (cyan) and
-    # thorax/end (green) annotation, so they're visible at a glance and
-    # clickable to jump straight there.
-    timeline_canvas = tk.Canvas(video_window, height=24, bg="#1a1a1a", highlightthickness=0)
+    # Timeline strip, Blender-dopesheet style: diamond markers for every
+    # placed waggle_start (orange) and thorax/end (blue) annotation, a frame
+    # ruler along the bottom, and a flagged playhead - all clickable to jump
+    # straight there.
+    timeline_canvas = tk.Canvas(video_window, height=40 + LABEL_HEIGHT, bg=BG_PANEL, highlightthickness=0)
     timeline_canvas.pack(fill=tk.X, padx=4, pady=(0, 2))
 
     def timeline_frame_to_x(frame, canvas_width):
@@ -473,24 +487,30 @@ def do_video(
     def redraw_timeline():
         timeline_canvas.delete("all")
         w = timeline_canvas.winfo_width() or 800
-        h = timeline_canvas.winfo_height() or 24
-        for position in annotations.waggle_starts:
-            x = timeline_frame_to_x(position.frame, w)
-            timeline_canvas.create_line(x, 0, x, h, fill="#00ffff", width=2)
-        for position in annotations.raw_thorax_positions:
-            x = timeline_frame_to_x(position.frame, w)
-            timeline_canvas.create_line(x, 0, x, h, fill="#00ff00", width=2)
+        h = timeline_canvas.winfo_height() or (40 + LABEL_HEIGHT)
+        marker_y = LABEL_HEIGHT + (h - LABEL_HEIGHT - RULER_HEIGHT) / 2
+        draw_frame_ruler(timeline_canvas, w, h, int(total_frames) - 1, timeline_frame_to_x)
+        # Include dances already queued via 'n' this session, not just the
+        # currently-active one, so earlier dances' markers don't disappear.
+        for dance in saved_dances + [annotations]:
+            for position in dance.waggle_starts:
+                x = timeline_frame_to_x(position.frame, w)
+                draw_diamond_marker(timeline_canvas, x, marker_y, ACCENT)
+            for position in dance.raw_thorax_positions:
+                x = timeline_frame_to_x(position.frame, w)
+                draw_diamond_marker(timeline_canvas, x, marker_y, ACCENT_BLUE)
         px = timeline_frame_to_x(current_frame, w)
-        timeline_canvas.create_line(px, 0, px, h, fill="white", width=1)
+        draw_playhead(timeline_canvas, px, LABEL_HEIGHT, h - RULER_HEIGHT, frame=current_frame)
 
-    def on_timeline_click(event):
+    def on_timeline_seek(event):
         w = timeline_canvas.winfo_width()
         move_frame_count(offset=0, target_frame=timeline_x_to_frame(event.x, w))
 
-    timeline_canvas.bind("<Button-1>", on_timeline_click)
+    timeline_canvas.bind("<Button-1>", on_timeline_seek)
+    timeline_canvas.bind("<B1-Motion>", on_timeline_seek)  # click-and-drag to scrub
 
     # Create the video panel
-    video_panel = tk.Label(video_window)
+    video_panel = tk.Label(video_window, bg="black")
     video_panel.pack(expand=True, fill='both')
     # video_panel.pack()
     
@@ -499,14 +519,14 @@ def do_video(
 
     # Now retrieve the heights of the widgets
     speed_scale_height = speed_scale.winfo_height()
-    frame_scale_height = frame_scale.winfo_height()
+    timeline_height = timeline_canvas.winfo_height()
 
     # Initialize the FramePostprocessingPipeline with video size and screen size
-    available_height = screen_height - speed_scale_height + frame_scale_height
+    available_height = screen_height - speed_scale_height + timeline_height
     frame_postprocessing_pipeline = FramePostprocessingPipeline(video_size=video_size, screen_size=(screen_width, available_height))
 
     # Set the initial size of the video window using target_size
-    total_window_height = frame_postprocessing_pipeline.target_size[1] + speed_scale_height + frame_scale_height
+    total_window_height = frame_postprocessing_pipeline.target_size[1] + speed_scale_height + timeline_height
     total_window_width = frame_postprocessing_pipeline.target_size[0]
     video_window.geometry(f"{total_window_width}x{total_window_height}")
 
@@ -525,18 +545,6 @@ def do_video(
 
     ##### Functions and methods for input handling
 
-    def on_frame_scale_change(value):
-        nonlocal current_frame, original_frame_image
-        target_frame = int(float(value))
-        current_frame = min(max(target_frame, 0), int(total_frames) - 1)
-        capture_cache.set_current_frame(current_frame)
-        original_frame_image = None  # Clear the current frame to load the new one
-
-        # Set focus back to video_window
-        video_window.focus_force()
-
-    frame_scale.config(command=on_frame_scale_change)
-
     # Variables for mouse position and frame
     last_mouse_position = (0, 0)
     last_raw_frame = None
@@ -547,10 +555,16 @@ def do_video(
         if hasattr(capture_cache.capture, 'release'):
             capture_cache.capture.release()
 
-        # Store dataset in file
+        # Store every dance from this session as its own row - the ones
+        # already queued via 'n', plus whatever's still active now.
+        dances_to_save = list(saved_dances)
         if not annotations.is_empty():
-            output_data(annotations, filepath)
-            print('\n\n\n\n\n\noutputting data to',get_output_filename(filepath),'\n\n\n\n')
+            dances_to_save.append(annotations)
+
+        if dances_to_save:
+            for dance in dances_to_save:
+                output_data(dance, filepath)
+            print(f"Saved {len(dances_to_save)} dance(s) to {get_output_filename(filepath)}")
         else:
             print("No annotations to save.")
 
@@ -562,19 +576,32 @@ def do_video(
     def on_key_event(event):
         nonlocal is_in_pause_mode, is_in_draw_vector_mode
         nonlocal current_frame, hide_past_annotations, original_frame_image
+        nonlocal annotations
         key = event.keysym.lower()
         nframes = calc_frames_to_move_tk(event, video_fps, debug)
 
         if key == "q":
             # Exit video
             on_video_window_close()
+        elif key == "n":
+            # Start a fresh dance, without closing the video or losing
+            # playback position - for videos with multiple separate dances.
+            # Nothing is written to disk here; the current dance is just
+            # queued and all queued dances get saved together on quit.
+            if not annotations.is_empty():
+                saved_dances.append(annotations)
+                annotations = Annotations()
+                session_action_history.append(("new_dance", None))
         elif key == "space":
             # Pause/unpause
             is_in_pause_mode = not is_in_pause_mode
         elif key == "r":
-            # Restart video and clear annotations
+            # Restart video and clear all annotations, including any
+            # dances already queued via 'n' this session.
             capture_cache.set_current_frame(0)
             annotations.clear()
+            saved_dances.clear()
+            session_action_history.clear()
             original_frame_image = None
         elif key == "a":
             move_frame_count(-nframes)
@@ -603,20 +630,47 @@ def do_video(
                     frame=last_raw_frame, mouse_position=last_mouse_position
                 )
         elif key == "x":
-            # Undo whichever annotation was placed most recently, regardless
-            # of where the playhead currently is - no need to navigate back
-            # to its exact frame first.
-            annotations.undo_last_action()
+            # One linear undo spanning the whole session: pops whatever
+            # happened most recently - a marker placement, or an 'n'
+            # dance-boundary - and reverses exactly that, regardless of
+            # where the playhead is. Undoing 'n' just swaps back to the
+            # previous dance; by the time it's undo-able, every marker
+            # placed after it has already been popped off first, in order.
+            if session_action_history:
+                action_kind, action_frame = session_action_history.pop()
+                if action_kind == "new_dance":
+                    if saved_dances:
+                        annotations = saved_dances.pop()
+                elif action_kind == "waggle_start":
+                    idx = Annotations.get_annotation_index_for_frame(
+                        annotations.waggle_starts, action_frame
+                    )
+                    if idx is not None:
+                        del annotations.waggle_starts[idx]
+                elif action_kind == "thorax_position":
+                    idx = Annotations.get_annotation_index_for_frame(
+                        annotations.raw_thorax_positions, action_frame
+                    )
+                    if idx is not None:
+                        del annotations.raw_thorax_positions[idx]
         elif key == "backspace":
             annotations.delete_annotations_on_frame(current_frame)
+            # Drop any undo-stack entries this just made stale, so 'x' never
+            # tries to "undo" a marker that's already gone.
+            session_action_history[:] = [
+                entry for entry in session_action_history
+                if not (
+                    entry[0] in ("waggle_start", "thorax_position")
+                    and entry[1] == current_frame
+                )
+            ]
         elif key == "f":
             max_frame_new = annotations.get_maximum_annotated_frame_index()
             max_frames = []
-            if old_annotations_list:
-                max_frame_old = max(
-                    int(a.get_maximum_annotated_frame_index() or 0) for a in old_annotations_list
-                )
-                max_frames.append(max_frame_old)
+            for dance in old_annotations_list + saved_dances:
+                max_frame_old = dance.get_maximum_annotated_frame_index()
+                if max_frame_old is not None:
+                    max_frames.append(max_frame_old)
             if max_frame_new is not None:
                 max_frames.append(max_frame_new)
             if max_frames:
@@ -669,6 +723,8 @@ def do_video(
                     )
                     return
                 annotations.update_waggle_start(current_frame, x_video, y_video)
+                if is_new_start:
+                    session_action_history.append(("waggle_start", current_frame))
                 is_in_draw_vector_mode = True
                 if not is_in_pause_mode:
                     is_in_pause_mode = True
@@ -688,6 +744,8 @@ def do_video(
                     )
                     return
                 annotations.update_thorax_position(current_frame, x_video, y_video)
+                if is_new_thorax:
+                    session_action_history.append(("thorax_position", current_frame))
 
         elif event.type == tk.EventType.Motion:
             last_mouse_position = (x_video, y_video)
@@ -758,8 +816,9 @@ def do_video(
         # Clear current raw frame so we fetch a new one even if in pause mode.
         original_frame_image = None
 
-        # Update frame scale
-        frame_scale.set(current_frame)
+        # Keep the timeline's playhead in sync immediately, rather than
+        # waiting for the next render tick.
+        redraw_timeline()
 
     # Bind events
     video_panel.bind("<ButtonPress-1>", on_mouse_event)  # Left-click
@@ -779,10 +838,10 @@ def do_video(
         window_width = event.width
         window_height = event.height
 
-        # Get the height of the speed and frame scales to calculate available space for the video panel
+        # Get the height of the speed scale and timeline to calculate available space for the video panel
         speed_scale_height = speed_scale.winfo_height() or 0
-        frame_scale_height = frame_scale.winfo_height() or 0
-        available_height = window_height - (speed_scale_height + frame_scale_height)
+        timeline_height = timeline_canvas.winfo_height() or 0
+        available_height = window_height - (speed_scale_height + timeline_height)
         available_width = window_width  # The width available is the window's width
 
         # Ensure positive available dimensions
@@ -879,8 +938,10 @@ def do_video(
             hide_past_annotations=hide_past_annotations,
             frame_postprocessing_pipeline=frame_postprocessing_pipeline
         )
-        if old_annotations_list and not hide_past_annotations:
-            for old_annotations in old_annotations_list:
+        if not hide_past_annotations:
+            # Dances already queued via 'n' this session render the same way
+            # as previously-saved ones, so they stay visible going forward.
+            for old_annotations in old_annotations_list + saved_dances:
                 frame = draw_bee_positions(
                     frame,
                     old_annotations,
@@ -920,8 +981,6 @@ def do_video(
         if current_speed == 0:
             is_in_pause_mode = True
 
-        # Update the frame_scale to reflect the current frame
-        frame_scale.set(current_frame)
         redraw_timeline()
 
         # Schedule the next frame update
