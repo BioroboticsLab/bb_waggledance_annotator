@@ -24,7 +24,7 @@ from .utils import open_video_capture
 VIDEO_EXTENSIONS = (
     ".mp4", ".avi", ".h264", ".mov", ".mkv",
     ".mpeg", ".mpg", ".wmv", ".flv", ".m4v",
-    ".3gp", ".3g2",
+    ".3gp", ".3g2", ".mts", ".m2ts",
 )
 
 

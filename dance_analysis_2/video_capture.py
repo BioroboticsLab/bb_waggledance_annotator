@@ -455,6 +455,40 @@ def do_video(
     frame_scale.set(0)  # Start at the first frame
     frame_scale.pack()
 
+    # Timeline strip: tick marks for every placed waggle_start (cyan) and
+    # thorax/end (green) annotation, so they're visible at a glance and
+    # clickable to jump straight there.
+    timeline_canvas = tk.Canvas(video_window, height=24, bg="#1a1a1a", highlightthickness=0)
+    timeline_canvas.pack(fill=tk.X, padx=4, pady=(0, 2))
+
+    def timeline_frame_to_x(frame, canvas_width):
+        span = max(int(total_frames) - 1, 1)
+        return int((frame / span) * (canvas_width - 4)) + 2
+
+    def timeline_x_to_frame(x, canvas_width):
+        frac = (x - 2) / max(canvas_width - 4, 1)
+        frac = min(max(frac, 0.0), 1.0)
+        return int(round(frac * (int(total_frames) - 1)))
+
+    def redraw_timeline():
+        timeline_canvas.delete("all")
+        w = timeline_canvas.winfo_width() or 800
+        h = timeline_canvas.winfo_height() or 24
+        for position in annotations.waggle_starts:
+            x = timeline_frame_to_x(position.frame, w)
+            timeline_canvas.create_line(x, 0, x, h, fill="#00ffff", width=2)
+        for position in annotations.raw_thorax_positions:
+            x = timeline_frame_to_x(position.frame, w)
+            timeline_canvas.create_line(x, 0, x, h, fill="#00ff00", width=2)
+        px = timeline_frame_to_x(current_frame, w)
+        timeline_canvas.create_line(px, 0, px, h, fill="white", width=1)
+
+    def on_timeline_click(event):
+        w = timeline_canvas.winfo_width()
+        move_frame_count(offset=0, target_frame=timeline_x_to_frame(event.x, w))
+
+    timeline_canvas.bind("<Button-1>", on_timeline_click)
+
     # Create the video panel
     video_panel = tk.Label(video_window)
     video_panel.pack(expand=True, fill='both')
@@ -568,7 +602,12 @@ def do_video(
                 frame_postprocessing_pipeline.select_next_cropping(
                     frame=last_raw_frame, mouse_position=last_mouse_position
                 )
-        elif key == "x" or key == "backspace":
+        elif key == "x":
+            # Undo whichever annotation was placed most recently, regardless
+            # of where the playhead currently is - no need to navigate back
+            # to its exact frame first.
+            annotations.undo_last_action()
+        elif key == "backspace":
             annotations.delete_annotations_on_frame(current_frame)
         elif key == "f":
             max_frame_new = annotations.get_maximum_annotated_frame_index()
@@ -883,6 +922,7 @@ def do_video(
 
         # Update the frame_scale to reflect the current frame
         frame_scale.set(current_frame)
+        redraw_timeline()
 
         # Schedule the next frame update
         delay = int(1000 / (speed_scale.get() if speed_scale.get() > 0 else 1))

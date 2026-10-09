@@ -27,7 +27,7 @@ class FileSelectorUI:
         video_extensions = (
             '.mp4', '.avi', '.h264', '.mov', '.mkv',
             '.mpeg', '.mpg', '.wmv', '.flv', '.m4v',
-            '.3gp', '.3g2'
+            '.3gp', '.3g2', '.mts', '.m2ts'
         )
 
         for root_dir, dirs, files in os.walk(self.root_path):
@@ -136,7 +136,8 @@ class FileSelectorUI:
             ("c", "Switch through different contrast improvement methods."),
             ("r", "Delete all current annotations and go to start of video."),
             ("q", "Save current annotations and close video."),
-            ("x or backspace", "Delete annotations in current frame."),
+            ("x", "Undo the most recently placed annotation (wherever it is)."),
+            ("backspace", "Delete annotations on the current frame."),
         ]
 
         # Fill the table with instructions
