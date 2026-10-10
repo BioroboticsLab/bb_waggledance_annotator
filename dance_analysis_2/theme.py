@@ -25,3 +25,22 @@ def hex_to_bgr(hex_color: str):
 ACCENT_BGR = hex_to_bgr(ACCENT)
 ACCENT_BLUE_BGR = hex_to_bgr(ACCENT_BLUE)
 ACCENT_RED_BGR = hex_to_bgr(ACCENT_RED)
+
+# Distinct colors cycled per-dance in reassign mode, so each dance's runs
+# stay visually distinguishable no matter how many dances there are.
+DANCE_PALETTE = [
+    "#ff8c1a",  # orange
+    "#4a90d9",  # blue
+    "#2ecc71",  # green
+    "#e74c3c",  # red
+    "#f1c40f",  # yellow
+    "#9b59b6",  # purple
+    "#1abc9c",  # teal
+    "#e67e22",  # dark orange
+]
+DANCE_PALETTE_BGR = [hex_to_bgr(c) for c in DANCE_PALETTE]
+
+
+def dance_color_bgr(dance_number: int):
+    """Cycles through DANCE_PALETTE_BGR, 1-indexed to match D{n} labels."""
+    return DANCE_PALETTE_BGR[(dance_number - 1) % len(DANCE_PALETTE_BGR)]

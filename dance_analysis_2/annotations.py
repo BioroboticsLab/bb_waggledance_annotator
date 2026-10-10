@@ -221,6 +221,29 @@ class Annotations:
                 del annotation_list[idx]
 
 
+def pair_runs(
+    dance: 'Annotations',
+) -> Tuple[
+    List[Tuple[AnnotatedPosition, AnnotatedPosition]],
+    List[AnnotatedPosition],
+    List[AnnotatedPosition],
+]:
+    """
+    Pairs each waggle start with its end position positionally (sorted by
+    frame, zipped 1:1) - the input ordering-constraint already enforces a
+    start, then its end, alternating with no overlap. At most the trailing
+    start can be unpaired (still awaiting its end); unpaired thorax entries
+    are atypical/legacy leftovers.
+    """
+    sorted_starts = sorted(dance.waggle_starts, key=lambda p: p.frame)
+    sorted_thorax = sorted(dance.raw_thorax_positions, key=lambda p: p.frame)
+    n_paired = min(len(sorted_starts), len(sorted_thorax))
+    paired_runs = list(zip(sorted_starts[:n_paired], sorted_thorax[:n_paired]))
+    unpaired_starts = sorted_starts[n_paired:]
+    unpaired_thorax = sorted_thorax[n_paired:]
+    return paired_runs, unpaired_starts, unpaired_thorax
+
+
 # Utility functions that might be needed
 
 def get_output_filename(filepath: str) -> str:

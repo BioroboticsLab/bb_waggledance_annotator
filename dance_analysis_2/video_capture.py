@@ -11,7 +11,7 @@ from tkinter import HORIZONTAL, messagebox
 from PIL import Image, ImageTk
 import sys
 import time
-from .annotations import Annotations
+from .annotations import Annotations, pair_runs
 from .pipeline import FramePostprocessingPipeline
 from .utils import (
     calculate_time,
@@ -22,7 +22,7 @@ from .utils import (
 )
 from .theme import (
     BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_BLUE, PLAYHEAD,
-    ACCENT_BGR, ACCENT_BLUE_BGR, ACCENT_RED_BGR,
+    ACCENT_BGR, ACCENT_BLUE_BGR, ACCENT_RED_BGR, dance_color_bgr,
 )
 from .timeline_widgets import (
     draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
@@ -254,16 +254,7 @@ def draw_bee_positions(
         waggle_start=ACCENT_BGR,
     )
 
-    # Pair each waggle start with its corresponding end positionally (sorted
-    # by frame, zipped 1:1) - the same pairing the input ordering-constraint
-    # already enforces: a start, then its end, alternating with no overlap.
-    # At most the last start can be unpaired (still awaiting its end).
-    sorted_starts = sorted(annotations.waggle_starts, key=lambda p: p.frame)
-    sorted_thorax = sorted(annotations.raw_thorax_positions, key=lambda p: p.frame)
-    n_paired = min(len(sorted_starts), len(sorted_thorax))
-    paired_runs = list(zip(sorted_starts[:n_paired], sorted_thorax[:n_paired]))
-    unpaired_starts = sorted_starts[n_paired:]
-    unpaired_thorax = sorted_thorax[n_paired:]  # atypical/legacy leftovers, if any
+    paired_runs, unpaired_starts, unpaired_thorax = pair_runs(annotations)
 
     if annotations.raw_thorax_positions:
         last_marker_frame = max(p.frame for p in annotations.raw_thorax_positions)
@@ -372,8 +363,30 @@ def draw_bee_positions(
     return img
 
 
-def output_data(annotations: Annotations, filepath: str):
-    # Write to CSV
+def draw_reassign_overlay(
+    img: np.ndarray,
+    dances_numbered,
+    frame_postprocessing_pipeline: Optional[FramePostprocessingPipeline] = None,
+) -> np.ndarray:
+    # Translucent colored ring at every marker, color-coded per dance, so
+    # reassign mode shows at a glance which dance a run can be dropped onto.
+    overlay = img.copy()
+    for dance_number, dance in dances_numbered:
+        color = dance_color_bgr(dance_number)
+        for position in dance.waggle_starts + dance.raw_thorax_positions:
+            x, y = position.x, position.y
+            if frame_postprocessing_pipeline is not None:
+                x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
+            cv.circle(overlay, (int(x), int(y)), 18, color, -1)
+    return cv.addWeighted(overlay, 0.3, img, 0.7, 0)
+
+
+def save_all_dances_for_video(dances, filepath: str) -> int:
+    # Rewrites every row for this video (rather than appending) - needed
+    # because reassign mode can move a run into or out of a dance that was
+    # already saved in a previous session, which changes that row's
+    # contents. Rows belonging to other videos in the same CSV are kept
+    # exactly as they were, untouched and unparsed.
     header = [
         "video_name",
         "thorax_positions",
@@ -382,29 +395,37 @@ def output_data(annotations: Annotations, filepath: str):
         "waggle_start_frames",
         "waggle_directions",
     ]
-    thorax_xy = [(p.x, p.y) for p in annotations.raw_thorax_positions]
-    thorax_frames = [p.frame for p in annotations.raw_thorax_positions]
-    waggle_xy = [(p.x, p.y) for p in annotations.waggle_starts]
-    waggle_frames = [p.frame for p in annotations.waggle_starts]
-    waggle_directions = [(float(p.u), float(p.v)) for p in annotations.waggle_starts]
-    data = [
-        filepath,
-        thorax_xy,
-        thorax_frames,
-        waggle_xy,
-        waggle_frames,
-        waggle_directions,
-    ]
+    rows = []
+    for dance in dances:
+        if dance.is_empty():
+            continue
+        rows.append([
+            filepath,
+            [(p.x, p.y) for p in dance.raw_thorax_positions],
+            [p.frame for p in dance.raw_thorax_positions],
+            [(p.x, p.y) for p in dance.waggle_starts],
+            [p.frame for p in dance.waggle_starts],
+            [(float(p.u), float(p.v)) for p in dance.waggle_starts],
+        ])
 
     output_filepath = get_output_filename(filepath)
-    is_first_entry = not os.path.exists(output_filepath)
+    target_leaf = os.path.basename(filepath)
+    other_rows = []
+    if os.path.exists(output_filepath):
+        with open(output_filepath, newline="", encoding="utf-8") as f:
+            existing_rows = list(csv.reader(f, **get_csv_writer_options()))
+        other_rows = [
+            row for row in existing_rows[1:]
+            if row and os.path.basename(row[0]) != target_leaf
+        ]
 
-    with open(output_filepath, "a", newline="", encoding="utf-8") as f:
+    with open(output_filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f, **get_csv_writer_options())
+        writer.writerow(header)
+        writer.writerows(other_rows)
+        writer.writerows(rows)
 
-        if is_first_entry:
-            writer.writerow(header)
-        writer.writerow(data)
+    return len(rows)
 
 
 def do_video(
@@ -433,6 +454,16 @@ def do_video(
     # time without needing to scrub into every run's own frame range.
     # None = no extra dance focused.
     focused_dance_index: Optional[int] = None
+    # Toggled with 'm': while True, every dance's runs are shown at once,
+    # color-coded per dance, and a left-click drag picks up the run nearest
+    # the press and reassigns it to whichever dance owns the marker it's
+    # dropped on (or a brand-new dance, if dropped on empty space) - a way
+    # to fix a run placed into the wrong dance without re-annotating it.
+    reassign_mode = False
+    # Set for the duration of a reassign-mode drag; None otherwise.
+    # Keys: source_dance, dance_number, start_position, end_position,
+    # press_pos (screen xy at pickup), screen_pos (current screen xy).
+    dragged_run = None
 
     cap = open_video_capture(filepath)
     cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
@@ -470,7 +501,22 @@ def do_video(
 
      # Create a Toplevel window for the video player
     video_window = tk.Toplevel()
-    video_window.title(f"Video Annotation Tool - {os.path.basename(filepath)} - {video_fps:.2f} FPS")
+
+    def update_window_title():
+        n_past = len(old_annotations_list) + len(saved_dances)
+        focus_label = (
+            "none" if focused_dance_index is None
+            else f"{focused_dance_index + 1} of {n_past}"
+        )
+        title = (
+            f"Video Annotation Tool - {os.path.basename(filepath)} - "
+            f"{video_fps:.2f} FPS - Focused dance: {focus_label}"
+        )
+        if reassign_mode:
+            title += " - REASSIGN MODE"
+        video_window.title(title)
+
+    update_window_title()
     video_window.configure(bg=BG)
     # video_window.resizable(False,False)  # disable default resizing in order to keep the aspect
 
@@ -515,13 +561,9 @@ def do_video(
             # Pair starts with thorax/end positions the same way
             # draw_bee_positions does, so the run numbers in these labels
             # match the D{n}-R{m} labels drawn on the video frame itself.
-            sorted_starts = sorted(dance.waggle_starts, key=lambda p: p.frame)
-            sorted_thorax = sorted(dance.raw_thorax_positions, key=lambda p: p.frame)
-            n_paired = min(len(sorted_starts), len(sorted_thorax))
+            paired_runs, _, _ = pair_runs(dance)
             run_number_by_frame = {}
-            for run_number, (start_position, end_position) in enumerate(
-                zip(sorted_starts[:n_paired], sorted_thorax[:n_paired]), start=1
-            ):
+            for run_number, (start_position, end_position) in enumerate(paired_runs, start=1):
                 run_number_by_frame[start_position.frame] = run_number
                 run_number_by_frame[end_position.frame] = run_number
 
@@ -599,16 +641,16 @@ def do_video(
         if hasattr(capture_cache.capture, 'release'):
             capture_cache.capture.release()
 
-        # Store every dance from this session as its own row - the ones
-        # already queued via 'n', plus whatever's still active now.
-        dances_to_save = list(saved_dances)
+        # Rewrite every dance for this video - ones already saved from a
+        # previous session (possibly edited via reassign mode), ones queued
+        # via 'n' this session, and whatever's still active now.
+        all_dances = old_annotations_list + saved_dances
         if not annotations.is_empty():
-            dances_to_save.append(annotations)
+            all_dances = all_dances + [annotations]
 
-        if dances_to_save:
-            for dance in dances_to_save:
-                output_data(dance, filepath)
-            print(f"Saved {len(dances_to_save)} dance(s) to {get_output_filename(filepath)}")
+        n_saved = save_all_dances_for_video(all_dances, filepath)
+        if n_saved:
+            print(f"Saved {n_saved} dance(s) to {get_output_filename(filepath)}")
         else:
             print("No annotations to save.")
 
@@ -621,6 +663,7 @@ def do_video(
         nonlocal is_in_pause_mode, is_in_draw_vector_mode
         nonlocal current_frame, hide_past_annotations, original_frame_image
         nonlocal annotations, focused_dance_index
+        nonlocal reassign_mode, dragged_run
         key = event.keysym.lower()
         nframes = calc_frames_to_move_tk(event, video_fps, debug)
 
@@ -647,6 +690,7 @@ def do_video(
             saved_dances.clear()
             session_action_history.clear()
             original_frame_image = None
+            dragged_run = None
         elif key == "a":
             move_frame_count(-nframes)
         elif key == "d":
@@ -678,14 +722,15 @@ def do_video(
                 else:
                     next_index = focused_dance_index + step
                     focused_dance_index = next_index if 0 <= next_index < n_past else None
-                label = (
-                    "none" if focused_dance_index is None
-                    else f"{focused_dance_index + 1} of {n_past}"
-                )
-                video_window.title(
-                    f"Video Annotation Tool - {os.path.basename(filepath)} - "
-                    f"{video_fps:.2f} FPS - Focused dance: {label}"
-                )
+                update_window_title()
+        elif key == "m":
+            # Toggle reassign mode: shows every dance's runs at once,
+            # color-coded, so a run placed into the wrong dance can be
+            # drag-and-dropped onto another dance's markers (or empty space,
+            # for a brand-new dance) instead of being re-annotated.
+            reassign_mode = not reassign_mode
+            dragged_run = None
+            update_window_title()
         elif key == "c":
             if last_raw_frame is not None:
                 frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=last_raw_frame)
@@ -742,6 +787,90 @@ def do_video(
                 max_frame = max(max_frames)
                 move_frame_count(offset=0, target_frame=max_frame)
 
+    REASSIGN_HIT_RADIUS = 22  # screen px - how close a click must land to a marker
+    REASSIGN_MIN_DRAG_DISTANCE = 8  # screen px - below this, treat as a stray click, not a drag
+
+    def all_dances_numbered():
+        # Same 1-based numbering as the D{n}-R{m} labels: previously-saved
+        # dances, then ones queued via 'n' this session, then the active one.
+        return list(enumerate(old_annotations_list + saved_dances + [annotations], start=1))
+
+    def marker_to_screen(position):
+        x, y = position.x, position.y
+        if frame_postprocessing_pipeline is not None:
+            x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
+        return x, y
+
+    def find_nearest_marker(screen_x, screen_y, exclude_dance=None):
+        # Returns (dance_number, dance, position) for whichever dance's
+        # marker is closest to the given screen point, within
+        # REASSIGN_HIT_RADIUS - excluding one dance (e.g. the drag's own
+        # source, so you can't "drop" a run back onto its own other markers).
+        best = None
+        best_dist = REASSIGN_HIT_RADIUS
+        for dance_number, dance in all_dances_numbered():
+            if dance is exclude_dance:
+                continue
+            for position in dance.waggle_starts + dance.raw_thorax_positions:
+                mx, my = marker_to_screen(position)
+                dist = ((mx - screen_x) ** 2 + (my - screen_y) ** 2) ** 0.5
+                if dist < best_dist:
+                    best = (dance_number, dance, position)
+                    best_dist = dist
+        return best
+
+    def begin_run_drag(screen_x, screen_y):
+        nonlocal dragged_run
+        hit = find_nearest_marker(screen_x, screen_y)
+        if hit is None:
+            return
+        dance_number, dance, position = hit
+        paired_runs, unpaired_starts, unpaired_thorax = pair_runs(dance)
+        start_position = end_position = None
+        for s, e in paired_runs:
+            if s is position or e is position:
+                start_position, end_position = s, e
+                break
+        if start_position is None and end_position is None:
+            if position in unpaired_starts:
+                start_position = position
+            else:
+                end_position = position
+        dragged_run = dict(
+            source_dance=dance,
+            dance_number=dance_number,
+            start_position=start_position,
+            end_position=end_position,
+            press_pos=(screen_x, screen_y),
+            screen_pos=(screen_x, screen_y),
+        )
+
+    def finish_run_drag(screen_x, screen_y):
+        nonlocal dragged_run, saved_dances
+        run = dragged_run
+        dragged_run = None
+        if run is None:
+            return
+        press_x, press_y = run["press_pos"]
+        moved_distance = ((screen_x - press_x) ** 2 + (screen_y - press_y) ** 2) ** 0.5
+        if moved_distance < REASSIGN_MIN_DRAG_DISTANCE:
+            return  # a stray click, not an actual drag - leave the run where it is
+
+        source_dance = run["source_dance"]
+        hit = find_nearest_marker(screen_x, screen_y, exclude_dance=source_dance)
+        if hit is not None:
+            _, target_dance, _ = hit
+        else:
+            target_dance = Annotations()
+            saved_dances.append(target_dance)
+
+        if run["start_position"] is not None:
+            source_dance.waggle_starts.remove(run["start_position"])
+            target_dance.waggle_starts.append(run["start_position"])
+        if run["end_position"] is not None:
+            source_dance.raw_thorax_positions.remove(run["end_position"])
+            target_dance.raw_thorax_positions.append(run["end_position"])
+
     def on_mouse_event(event):
         nonlocal is_in_draw_vector_mode, is_in_pause_mode
         nonlocal last_mouse_position
@@ -762,6 +891,20 @@ def do_video(
 
         # Update last mouse position
         last_mouse_position = (x, y)
+
+        if reassign_mode:
+            # Reassign mode replaces normal marker placement entirely while
+            # active - only a button-1 drag does anything. event.num isn't
+            # meaningful on plain <Motion> events, so that case is gated by
+            # dragged_run being set (i.e. a drag already in progress) rather
+            # than by event.num.
+            if event.type == tk.EventType.ButtonPress and event.num == 1:
+                begin_run_drag(x, y)
+            elif event.type == tk.EventType.Motion and dragged_run is not None:
+                dragged_run["screen_pos"] = (x, y)
+            elif event.type == tk.EventType.ButtonRelease and event.num == 1:
+                finish_run_drag(x, y)
+            return
 
         # Transform screen coordinates to video coordinates
         x_video, y_video = frame_postprocessing_pipeline.transform_coordinates_screen_to_video((x, y))
@@ -1006,11 +1149,13 @@ def do_video(
             frame_postprocessing_pipeline=frame_postprocessing_pipeline,
             show_all=True,  # always show every run of the dance being actively annotated
             dance_number=active_dance_number,
-            show_labels=not hide_past_annotations,
+            show_labels=not hide_past_annotations or reassign_mode,
         )
-        if not hide_past_annotations:
+        if not hide_past_annotations or reassign_mode:
             # Dances already queued via 'n' this session render the same way
             # as previously-saved ones, so they stay visible going forward.
+            # Reassign mode shows every run of every dance regardless of
+            # frame range or focus, so every drop target is visible at once.
             for dance_index, old_annotations in enumerate(past_dances):
                 frame = draw_bee_positions(
                     frame,
@@ -1018,9 +1163,20 @@ def do_video(
                     current_frame=current_frame,
                     dance_number=dance_index + 1,
                     show_labels=True,
-                    show_all=(dance_index == focused_dance_index),
+                    show_all=(reassign_mode or dance_index == focused_dance_index),
                     frame_postprocessing_pipeline=frame_postprocessing_pipeline
                 )
+
+        if reassign_mode:
+            frame = draw_reassign_overlay(frame, all_dances_numbered(), frame_postprocessing_pipeline)
+            if dragged_run is not None:
+                gx, gy = dragged_run["screen_pos"]
+                drag_color = dance_color_bgr(dragged_run["dance_number"])
+                cv.circle(frame, (int(gx), int(gy)), 12, drag_color, -1)
+                cv.circle(frame, (int(gx), int(gy)), 12, (255, 255, 255), 2)
+            banner = "REASSIGN MODE - drag a run onto another dance's circle (empty space = new dance)"
+            cv.putText(frame, banner, (10, 24), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv.LINE_AA)
+            cv.putText(frame, banner, (10, 24), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
 
         # Convert the frame to an image that can be displayed in Tkinter
         frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)

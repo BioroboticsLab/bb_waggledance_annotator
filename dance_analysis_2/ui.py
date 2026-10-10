@@ -136,6 +136,7 @@ class FileSelectorUI:
             ("-", "Decrease replay speed."),
             ("h", "Hide/show past dances - shown also displays D{dance}-R{run} labels at markers."),
             ("Left / Right", "Cycle which past dance is fully shown, for reviewing one at a time."),
+            ("m", "Toggle reassign mode - drag a run onto another dance's color to move it there, or onto empty space for a new dance."),
             ("c", "Switch through different contrast improvement methods."),
             ("r", "Delete all current annotations and go to start of video."),
             ("q", "Save current annotations and close video."),
