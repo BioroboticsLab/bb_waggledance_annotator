@@ -3,11 +3,76 @@
 # Blender-dopesheet-style timeline drawing helpers, shared by the annotator
 # and the video splitter so both timelines look and behave the same way.
 
-from .theme import FG_MUTED, PLAYHEAD
+import tkinter as tk
+
+from .theme import BG_PANEL, FG, FG_MUTED, ACCENT, PLAYHEAD
 
 MARKER_SIZE = 5
 RULER_HEIGHT = 16
 LABEL_HEIGHT = 12  # space reserved above the playhead for its frame number
+
+
+class BlenderSlider:
+    """
+    A horizontal filled-bar slider in the style of Blender's: the current
+    value is shown as a proportionally-filled accent bar with the label and
+    value overlaid as text, rather than a native OS groove-and-handle.
+
+    Drop-in compatible with the handful of tk.Scale methods this codebase
+    actually uses (get/set/pack/winfo_height), so it can swap in without
+    touching call sites elsewhere.
+    """
+
+    def __init__(self, parent, from_, to, label, length=300, height=24, initial=None):
+        self.from_ = from_
+        self.to = to
+        self.label = label
+        self._value = initial if initial is not None else from_
+        self.canvas = tk.Canvas(
+            parent, width=length, height=height, bg=BG_PANEL, highlightthickness=0
+        )
+        self.canvas.bind("<Button-1>", self._on_seek)
+        self.canvas.bind("<B1-Motion>", self._on_seek)
+        self.canvas.bind("<Configure>", lambda event: self._redraw())
+        self._redraw()
+
+    def _on_seek(self, event):
+        # Button-1 bit in the event state mask; guards against any stray
+        # <B1-Motion> delivered without an actual held button.
+        if event.type == tk.EventType.Motion and not (event.state & 0x100):
+            return
+        w = self.canvas.winfo_width() or 1
+        frac = min(max(event.x / w, 0.0), 1.0)
+        self.set(self.from_ + frac * (self.to - self.from_))
+
+    def _redraw(self):
+        self.canvas.delete("all")
+        w = self.canvas.winfo_width() or int(self.canvas["width"])
+        h = self.canvas.winfo_height() or int(self.canvas["height"])
+        span = max(self.to - self.from_, 1e-9)
+        frac = min(max((self._value - self.from_) / span, 0.0), 1.0)
+        fill_x = int(frac * w)
+        self.canvas.create_rectangle(0, 0, w, h, fill=BG_PANEL, outline="")
+        if fill_x > 0:
+            self.canvas.create_rectangle(0, 0, fill_x, h, fill=ACCENT, outline="")
+        text_color = "#1a1a1a" if frac > 0.12 else FG
+        self.canvas.create_text(
+            6, h / 2, text=f"{self.label}: {int(self._value)}",
+            fill=text_color, anchor="w", font=("TkDefaultFont", 9, "bold"),
+        )
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = min(max(round(value), self.from_), self.to)
+        self._redraw()
+
+    def pack(self, **kwargs):
+        self.canvas.pack(**kwargs)
+
+    def winfo_height(self):
+        return self.canvas.winfo_height()
 
 
 def draw_diamond_marker(canvas, x, y, fill, size=MARKER_SIZE, outline="#1a1a1a"):

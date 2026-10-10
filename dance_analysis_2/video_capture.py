@@ -26,6 +26,7 @@ from .theme import (
 )
 from .timeline_widgets import (
     draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
+    MARKER_SIZE, BlenderSlider,
 )
 
 try:
@@ -239,7 +240,10 @@ def draw_bee_positions(
     annotations: Annotations,
     current_frame: int,
     hide_past_annotations: bool = False,
-    frame_postprocessing_pipeline: Optional[FramePostprocessingPipeline] = None
+    frame_postprocessing_pipeline: Optional[FramePostprocessingPipeline] = None,
+    show_all: bool = False,
+    dance_number: Optional[int] = None,
+    show_labels: bool = False,
 ) -> np.ndarray:
     # Markers from a previous session (old_annotations_list) use the same
     # vivid colors as live annotation - a muted/grey palette made them hard
@@ -264,10 +268,23 @@ def draw_bee_positions(
     if annotations.raw_thorax_positions:
         last_marker_frame = max(p.frame for p in annotations.raw_thorax_positions)
 
+    def draw_run_label(position, run_number):
+        if not (show_labels and dance_number is not None):
+            return
+        x, y = position.x, position.y
+        if frame_postprocessing_pipeline is not None:
+            x, y = frame_postprocessing_pipeline.transform_coordinates_video_to_screen((x, y))
+        text = f"D{dance_number}-R{run_number}"
+        pos = (int(x) + 8, int(y) - 8)
+        cv.putText(img, text, pos, cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, cv.LINE_AA)
+        cv.putText(img, text, pos, cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv.LINE_AA)
+
     # Thorax/end markers: only visible while current_frame is within the
-    # paired run's [start, end] range.
-    for start_position, end_position in paired_runs:
-        if not (start_position.frame <= current_frame <= end_position.frame):
+    # paired run's [start, end] range - unless show_all is set, which keeps
+    # every run from the currently-active dance visible regardless of where
+    # you've scrubbed to (past/saved dances stay range-scoped to cut clutter).
+    for run_number, (start_position, end_position) in enumerate(paired_runs, start=1):
+        if not show_all and not (start_position.frame <= current_frame <= end_position.frame):
             continue
 
         x, y = end_position.x, end_position.y
@@ -279,6 +296,7 @@ def draw_bee_positions(
         img = cv.circle(
             img, (int(x), int(y)), radius, colormap["thorax_position"], 2
         )
+        draw_run_label(end_position, run_number)
 
     # Any thorax positions left over without a matching start (shouldn't
     # happen going forward given the input ordering-constraint, but can occur
@@ -341,10 +359,11 @@ def draw_bee_positions(
         return img_local
 
     # Waggle start markers: same [start, end] visibility rule when paired.
-    for start_position, end_position in paired_runs:
-        if not (start_position.frame <= current_frame <= end_position.frame):
+    for run_number, (start_position, end_position) in enumerate(paired_runs, start=1):
+        if not show_all and not (start_position.frame <= current_frame <= end_position.frame):
             continue
         img = draw_waggle_start(start_position)
+        draw_run_label(start_position, run_number)
 
     # A start still awaiting its end stays visible - nothing to bound it to yet.
     for position in unpaired_starts:
@@ -408,6 +427,12 @@ def do_video(
     # ("new_dance", None).
     session_action_history: List[Tuple[str, Optional[int]]] = []
     old_annotations_list = Annotations.load(filepath)
+    # Index into (old_annotations_list + saved_dances) of the past dance
+    # currently "focused" via '['/']' - that dance shows all its markers too
+    # (same as the always-shown active one), for reviewing one dance at a
+    # time without needing to scrub into every run's own frame range.
+    # None = no extra dance focused.
+    focused_dance_index: Optional[int] = None
 
     cap = open_video_capture(filepath)
     cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
@@ -449,22 +474,15 @@ def do_video(
     video_window.configure(bg=BG)
     # video_window.resizable(False,False)  # disable default resizing in order to keep the aspect
 
-    scale_style = dict(
-        bg=BG, fg=FG, troughcolor=BG_PANEL,
-        highlightbackground=BG, highlightthickness=0, activebackground=ACCENT,
-    )
-
     # Create the widgets first
-    speed_scale = tk.Scale(
+    speed_scale = BlenderSlider(
         video_window,
         from_=0,
         to=int(3 * video_fps),
-        orient=tk.HORIZONTAL,
         label="Speed (FPS)",
         length=600,
-        **scale_style,
+        initial=int(video_fps),  # Set initial speed to video FPS
     )
-    speed_scale.set(int(video_fps))  # Set initial speed to video FPS
     speed_scale.pack()
 
 
@@ -490,15 +508,41 @@ def do_video(
         h = timeline_canvas.winfo_height() or (40 + LABEL_HEIGHT)
         marker_y = LABEL_HEIGHT + (h - LABEL_HEIGHT - RULER_HEIGHT) / 2
         draw_frame_ruler(timeline_canvas, w, h, int(total_frames) - 1, timeline_frame_to_x)
-        # Include dances already queued via 'n' this session, not just the
-        # currently-active one, so earlier dances' markers don't disappear.
-        for dance in saved_dances + [annotations]:
+        # Include dances already saved from a previous session
+        # (old_annotations_list), plus any queued via 'n' this session, not
+        # just the currently-active one, so no dance's markers disappear.
+        for dance_number, dance in enumerate(old_annotations_list + saved_dances + [annotations], start=1):
+            # Pair starts with thorax/end positions the same way
+            # draw_bee_positions does, so the run numbers in these labels
+            # match the D{n}-R{m} labels drawn on the video frame itself.
+            sorted_starts = sorted(dance.waggle_starts, key=lambda p: p.frame)
+            sorted_thorax = sorted(dance.raw_thorax_positions, key=lambda p: p.frame)
+            n_paired = min(len(sorted_starts), len(sorted_thorax))
+            run_number_by_frame = {}
+            for run_number, (start_position, end_position) in enumerate(
+                zip(sorted_starts[:n_paired], sorted_thorax[:n_paired]), start=1
+            ):
+                run_number_by_frame[start_position.frame] = run_number
+                run_number_by_frame[end_position.frame] = run_number
+
             for position in dance.waggle_starts:
                 x = timeline_frame_to_x(position.frame, w)
                 draw_diamond_marker(timeline_canvas, x, marker_y, ACCENT)
+                if not hide_past_annotations and position.frame in run_number_by_frame:
+                    timeline_canvas.create_text(
+                        x, marker_y - MARKER_SIZE - 2,
+                        text=f"D{dance_number}-R{run_number_by_frame[position.frame]}",
+                        fill=FG, anchor="s", font=("TkDefaultFont", 7, "bold"),
+                    )
             for position in dance.raw_thorax_positions:
                 x = timeline_frame_to_x(position.frame, w)
                 draw_diamond_marker(timeline_canvas, x, marker_y, ACCENT_BLUE)
+                if not hide_past_annotations and position.frame in run_number_by_frame:
+                    timeline_canvas.create_text(
+                        x, marker_y - MARKER_SIZE - 2,
+                        text=f"D{dance_number}-R{run_number_by_frame[position.frame]}",
+                        fill=FG, anchor="s", font=("TkDefaultFont", 7, "bold"),
+                    )
         px = timeline_frame_to_x(current_frame, w)
         draw_playhead(timeline_canvas, px, LABEL_HEIGHT, h - RULER_HEIGHT, frame=current_frame)
 
@@ -576,7 +620,7 @@ def do_video(
     def on_key_event(event):
         nonlocal is_in_pause_mode, is_in_draw_vector_mode
         nonlocal current_frame, hide_past_annotations, original_frame_image
-        nonlocal annotations
+        nonlocal annotations, focused_dance_index
         key = event.keysym.lower()
         nframes = calc_frames_to_move_tk(event, video_fps, debug)
 
@@ -621,6 +665,27 @@ def do_video(
             speed_scale.set(max(speed_scale.get() - 10, 0))
         elif key == "h":
             hide_past_annotations = not hide_past_annotations
+        elif key in ("right", "left"):
+            # Cycle which past dance is "focused" (shown fully, like the
+            # active one always is) - lets you review one dance at a time
+            # without scrubbing into every run's own frame range. Cycles
+            # through None (no extra focus) and every past dance.
+            n_past = len(old_annotations_list) + len(saved_dances)
+            if n_past > 0:
+                step = 1 if key == "right" else -1
+                if focused_dance_index is None:
+                    focused_dance_index = 0 if step > 0 else n_past - 1
+                else:
+                    next_index = focused_dance_index + step
+                    focused_dance_index = next_index if 0 <= next_index < n_past else None
+                label = (
+                    "none" if focused_dance_index is None
+                    else f"{focused_dance_index + 1} of {n_past}"
+                )
+                video_window.title(
+                    f"Video Annotation Tool - {os.path.basename(filepath)} - "
+                    f"{video_fps:.2f} FPS - Focused dance: {label}"
+                )
         elif key == "c":
             if last_raw_frame is not None:
                 frame_postprocessing_pipeline.select_next_contrast_postprocessing(frame=last_raw_frame)
@@ -931,21 +996,29 @@ def do_video(
             frame,
             current_time=calculate_time(current_frame, video_fps),
         )
+        past_dances = old_annotations_list + saved_dances
+        active_dance_number = len(past_dances) + 1
         frame = draw_bee_positions(
             frame,
             annotations,
             current_frame=current_frame,
             hide_past_annotations=hide_past_annotations,
-            frame_postprocessing_pipeline=frame_postprocessing_pipeline
+            frame_postprocessing_pipeline=frame_postprocessing_pipeline,
+            show_all=True,  # always show every run of the dance being actively annotated
+            dance_number=active_dance_number,
+            show_labels=not hide_past_annotations,
         )
         if not hide_past_annotations:
             # Dances already queued via 'n' this session render the same way
             # as previously-saved ones, so they stay visible going forward.
-            for old_annotations in old_annotations_list + saved_dances:
+            for dance_index, old_annotations in enumerate(past_dances):
                 frame = draw_bee_positions(
                     frame,
                     old_annotations,
                     current_frame=current_frame,
+                    dance_number=dance_index + 1,
+                    show_labels=True,
+                    show_all=(dance_index == focused_dance_index),
                     frame_postprocessing_pipeline=frame_postprocessing_pipeline
                 )
 
