@@ -44,3 +44,8 @@ DANCE_PALETTE_BGR = [hex_to_bgr(c) for c in DANCE_PALETTE]
 def dance_color_bgr(dance_number: int):
     """Cycles through DANCE_PALETTE_BGR, 1-indexed to match D{n} labels."""
     return DANCE_PALETTE_BGR[(dance_number - 1) % len(DANCE_PALETTE_BGR)]
+
+
+def dance_color_hex(dance_number: int):
+    """Same cycle as dance_color_bgr, as a '#rrggbb' string for Tk canvases."""
+    return DANCE_PALETTE[(dance_number - 1) % len(DANCE_PALETTE)]

@@ -22,7 +22,7 @@ from .utils import (
 )
 from .theme import (
     BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_BLUE, PLAYHEAD,
-    ACCENT_BGR, ACCENT_BLUE_BGR, ACCENT_RED_BGR, dance_color_bgr,
+    ACCENT_BGR, ACCENT_BLUE_BGR, ACCENT_RED_BGR, dance_color_bgr, dance_color_hex,
 )
 from .timeline_widgets import (
     draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
@@ -567,8 +567,22 @@ def do_video(
                 run_number_by_frame[start_position.frame] = run_number
                 run_number_by_frame[end_position.frame] = run_number
 
+            # In reassign mode, a translucent band in the dance's color spans
+            # the full timeline height behind each of its markers, so dance
+            # membership is visible on the timeline too - the diamonds
+            # themselves keep their usual orange/blue start/end coloring.
+            dance_band_color = dance_color_hex(dance_number) if reassign_mode else None
+
+            def draw_dance_band(x):
+                timeline_canvas.create_rectangle(
+                    x - MARKER_SIZE - 2, 0, x + MARKER_SIZE + 2, h,
+                    fill=dance_band_color, outline="", stipple="gray50",
+                )
+
             for position in dance.waggle_starts:
                 x = timeline_frame_to_x(position.frame, w)
+                if dance_band_color is not None:
+                    draw_dance_band(x)
                 draw_diamond_marker(timeline_canvas, x, marker_y, ACCENT)
                 if not hide_past_annotations and position.frame in run_number_by_frame:
                     timeline_canvas.create_text(
@@ -578,6 +592,8 @@ def do_video(
                     )
             for position in dance.raw_thorax_positions:
                 x = timeline_frame_to_x(position.frame, w)
+                if dance_band_color is not None:
+                    draw_dance_band(x)
                 draw_diamond_marker(timeline_canvas, x, marker_y, ACCENT_BLUE)
                 if not hide_past_annotations and position.frame in run_number_by_frame:
                     timeline_canvas.create_text(
