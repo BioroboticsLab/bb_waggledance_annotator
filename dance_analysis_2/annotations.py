@@ -43,6 +43,10 @@ class Annotations:
     def __init__(self):
         self.raw_thorax_positions: List[AnnotatedPosition] = []
         self.waggle_starts: List[AnnotatedPosition] = []
+        # Stable display number (D{dance_id}-R{run}), assigned once per
+        # dance and never recomputed from list position - so creating or
+        # removing one dance never renumbers any other.
+        self.dance_id: Optional[int] = None
 
     def update_thorax_position(self, frame: int, x: int, y: int):
         existing_index = Annotations.get_annotation_index_for_frame(
@@ -212,13 +216,15 @@ class Annotations:
                 raise
             return []
 
-    def delete_annotations_on_frame(self, current_frame: int):
+    def delete_annotations_on_frame(self, current_frame: int) -> List[AnnotatedPosition]:
+        deleted = []
         for annotation_list in (self.raw_thorax_positions, self.waggle_starts):
             idx = Annotations.get_annotation_index_for_frame(
                 annotation_list, current_frame
             )
             if idx is not None:
-                del annotation_list[idx]
+                deleted.append(annotation_list.pop(idx))
+        return deleted
 
 
 def pair_runs(

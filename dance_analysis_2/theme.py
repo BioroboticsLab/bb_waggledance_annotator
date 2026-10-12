@@ -49,3 +49,21 @@ def dance_color_bgr(dance_number: int):
 def dance_color_hex(dance_number: int):
     """Same cycle as dance_color_bgr, as a '#rrggbb' string for Tk canvases."""
     return DANCE_PALETTE[(dance_number - 1) % len(DANCE_PALETTE)]
+
+
+def blend_hex(fg_hex: str, bg_hex: str, alpha: float) -> str:
+    """
+    Blends fg over bg at the given alpha (0-1), returning a flat
+    '#rrggbb'. Tk Canvas fills have no real alpha compositing - stipple
+    dithering is the usual stand-in, but it reads as a hatched/opaque
+    pattern rather than translucent, so a pre-blended flat color is used
+    instead wherever a canvas needs an actual "see-through" look.
+    """
+    fg = fg_hex.lstrip("#")
+    bg = bg_hex.lstrip("#")
+    channels = []
+    for i in range(0, 6, 2):
+        f = int(fg[i:i + 2], 16)
+        b = int(bg[i:i + 2], 16)
+        channels.append(round(alpha * f + (1 - alpha) * b))
+    return "#{:02x}{:02x}{:02x}".format(*channels)

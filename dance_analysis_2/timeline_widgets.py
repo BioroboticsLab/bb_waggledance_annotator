@@ -7,9 +7,9 @@ import tkinter as tk
 
 from .theme import BG_PANEL, FG, FG_MUTED, ACCENT, PLAYHEAD
 
-MARKER_SIZE = 5
-RULER_HEIGHT = 16
-LABEL_HEIGHT = 12  # space reserved above the playhead for its frame number
+MARKER_SIZE = 6
+RULER_HEIGHT = 19
+LABEL_HEIGHT = 14  # space reserved above the playhead for its frame number
 
 
 class BlenderSlider:
@@ -86,7 +86,7 @@ def draw_diamond_marker(canvas, x, y, fill, size=MARKER_SIZE, outline="#1a1a1a")
     )
 
 
-def draw_playhead(canvas, x, top, bottom, frame=None, color=PLAYHEAD, flag_size=5):
+def draw_playhead(canvas, x, top, bottom, frame=None, color=PLAYHEAD, flag_size=6):
     """
     Draws a vertical playhead line with a small triangular flag at top, and
     (if frame is given) its frame number just above the flag - space for it
@@ -103,7 +103,7 @@ def draw_playhead(canvas, x, top, bottom, frame=None, color=PLAYHEAD, flag_size=
     if frame is not None:
         canvas.create_text(
             x, max(top - 2, 2), text=str(frame), fill=color,
-            anchor="s", font=("TkDefaultFont", 8, "bold"),
+            anchor="s", font=("TkDefaultFont", 10, "bold"),
         )
 
 
@@ -133,6 +133,6 @@ def draw_frame_ruler(canvas, canvas_width, canvas_height, total_frames, frame_to
         canvas.create_line(x, ruler_top, x, ruler_top + 4, fill=FG_MUTED, width=1)
         canvas.create_text(
             x, canvas_height, text=str(frame), fill=FG_MUTED,
-            anchor="s", font=("TkDefaultFont", 7),
+            anchor="s", font=("TkDefaultFont", 8),
         )
         frame += interval

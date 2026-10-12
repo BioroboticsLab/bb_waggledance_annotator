@@ -141,7 +141,8 @@ class FileSelectorUI:
             ("r", "Delete all current annotations and go to start of video."),
             ("q", "Save current annotations and close video."),
             ("n", "Start a fresh dance (video stays open). Nothing is saved to disk until 'q'."),
-            ("x", "Undo whatever happened most recently - a marker, or 'n' itself."),
+            ("x", "Undo whatever happened most recently - a marker, 'n', or a reassign-mode drag."),
+            ("z", "Redo whatever 'x' most recently undid."),
             ("backspace", "Delete annotations on the current frame."),
         ]
 

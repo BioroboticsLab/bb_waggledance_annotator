@@ -23,6 +23,7 @@ from .utils import (
 from .theme import (
     BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_BLUE, PLAYHEAD,
     ACCENT_BGR, ACCENT_BLUE_BGR, ACCENT_RED_BGR, dance_color_bgr, dance_color_hex,
+    blend_hex,
 )
 from .timeline_widgets import (
     draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
@@ -441,13 +442,27 @@ def do_video(
     # Dances finished via 'n' within this session - not written to disk yet,
     # all of them get saved together as separate rows when the video closes.
     saved_dances: List[Annotations] = []
-    # One linear undo stack spanning the whole session: marker placements
-    # AND 'n' dance-boundaries are pushed here in true chronological order,
-    # so 'x' always undoes whatever happened most recently, including 'n'
-    # itself. Entries: ("waggle_start" | "thorax_position", frame) or
-    # ("new_dance", None).
-    session_action_history: List[Tuple[str, Optional[int]]] = []
+    # One linear undo/redo stack spanning the whole session, command-pattern
+    # style: every entry is (undo_fn, redo_fn, tracked_positions). Marker
+    # placements, 'n' dance-boundaries, and reassign-mode drags all push
+    # here in true chronological order, so 'x' always undoes whatever
+    # happened most recently (including 'n' or a drag) and 'z' redoes
+    # whatever 'x' just undid. tracked_positions lets 'backspace' (which
+    # deletes directly, bypassing this stack) purge any now-stale entries
+    # that reference a position it just removed.
+    undo_stack: List[Tuple[Callable[[], None], Callable[[], None], Tuple]] = []
+    redo_stack: List[Tuple[Callable[[], None], Callable[[], None], Tuple]] = []
     old_annotations_list = Annotations.load(filepath)
+    # Stable per-dance display numbers (D{dance_id}-R{run}): assigned once,
+    # in load/creation order, and never recomputed from list position - so
+    # creating or removing a dance (e.g. a reassign-mode drag to empty
+    # space, or undoing one) never renumbers any other dance.
+    next_dance_id = 1
+    for _old_dance in old_annotations_list:
+        _old_dance.dance_id = next_dance_id
+        next_dance_id += 1
+    annotations.dance_id = next_dance_id
+    next_dance_id += 1
     # Index into (old_annotations_list + saved_dances) of the past dance
     # currently "focused" via '['/']' - that dance shows all its markers too
     # (same as the always-shown active one), for reviewing one dance at a
@@ -536,7 +551,7 @@ def do_video(
     # placed waggle_start (orange) and thorax/end (blue) annotation, a frame
     # ruler along the bottom, and a flagged playhead - all clickable to jump
     # straight there.
-    timeline_canvas = tk.Canvas(video_window, height=40 + LABEL_HEIGHT, bg=BG_PANEL, highlightthickness=0)
+    timeline_canvas = tk.Canvas(video_window, height=48 + LABEL_HEIGHT, bg=BG_PANEL, highlightthickness=0)
     timeline_canvas.pack(fill=tk.X, padx=4, pady=(0, 2))
 
     def timeline_frame_to_x(frame, canvas_width):
@@ -551,13 +566,15 @@ def do_video(
     def redraw_timeline():
         timeline_canvas.delete("all")
         w = timeline_canvas.winfo_width() or 800
-        h = timeline_canvas.winfo_height() or (40 + LABEL_HEIGHT)
+        h = timeline_canvas.winfo_height() or (48 + LABEL_HEIGHT)
         marker_y = LABEL_HEIGHT + (h - LABEL_HEIGHT - RULER_HEIGHT) / 2
         draw_frame_ruler(timeline_canvas, w, h, int(total_frames) - 1, timeline_frame_to_x)
         # Include dances already saved from a previous session
         # (old_annotations_list), plus any queued via 'n' this session, not
         # just the currently-active one, so no dance's markers disappear.
-        for dance_number, dance in enumerate(old_annotations_list + saved_dances + [annotations], start=1):
+        for dance in old_annotations_list + saved_dances + [annotations]:
+            # Stable per-dance number - never recomputed from list position.
+            dance_number = dance.dance_id
             # Pair starts with thorax/end positions the same way
             # draw_bee_positions does, so the run numbers in these labels
             # match the D{n}-R{m} labels drawn on the video frame itself.
@@ -571,12 +588,19 @@ def do_video(
             # the full timeline height behind each of its markers, so dance
             # membership is visible on the timeline too - the diamonds
             # themselves keep their usual orange/blue start/end coloring.
-            dance_band_color = dance_color_hex(dance_number) if reassign_mode else None
+            # Tk Canvas has no real alpha compositing, so the "translucent"
+            # look is a flat color pre-blended against the timeline's own
+            # background rather than a stippled fill (which reads as an
+            # opaque hatch pattern, not see-through).
+            dance_band_color = (
+                blend_hex(dance_color_hex(dance_number), BG_PANEL, 0.35)
+                if reassign_mode else None
+            )
 
             def draw_dance_band(x):
                 timeline_canvas.create_rectangle(
                     x - MARKER_SIZE - 2, 0, x + MARKER_SIZE + 2, h,
-                    fill=dance_band_color, outline="", stipple="gray50",
+                    fill=dance_band_color, outline="",
                 )
 
             for position in dance.waggle_starts:
@@ -588,7 +612,7 @@ def do_video(
                     timeline_canvas.create_text(
                         x, marker_y - MARKER_SIZE - 2,
                         text=f"D{dance_number}-R{run_number_by_frame[position.frame]}",
-                        fill=FG, anchor="s", font=("TkDefaultFont", 7, "bold"),
+                        fill=FG, anchor="s", font=("TkDefaultFont", 8, "bold"),
                     )
             for position in dance.raw_thorax_positions:
                 x = timeline_frame_to_x(position.frame, w)
@@ -599,7 +623,7 @@ def do_video(
                     timeline_canvas.create_text(
                         x, marker_y - MARKER_SIZE - 2,
                         text=f"D{dance_number}-R{run_number_by_frame[position.frame]}",
-                        fill=FG, anchor="s", font=("TkDefaultFont", 7, "bold"),
+                        fill=FG, anchor="s", font=("TkDefaultFont", 8, "bold"),
                     )
         px = timeline_frame_to_x(current_frame, w)
         draw_playhead(timeline_canvas, px, LABEL_HEIGHT, h - RULER_HEIGHT, frame=current_frame)
@@ -678,7 +702,7 @@ def do_video(
     def on_key_event(event):
         nonlocal is_in_pause_mode, is_in_draw_vector_mode
         nonlocal current_frame, hide_past_annotations, original_frame_image
-        nonlocal annotations, focused_dance_index
+        nonlocal annotations, focused_dance_index, next_dance_id
         nonlocal reassign_mode, dragged_run
         key = event.keysym.lower()
         nframes = calc_frames_to_move_tk(event, video_fps, debug)
@@ -692,9 +716,26 @@ def do_video(
             # Nothing is written to disk here; the current dance is just
             # queued and all queued dances get saved together on quit.
             if not annotations.is_empty():
-                saved_dances.append(annotations)
-                annotations = Annotations()
-                session_action_history.append(("new_dance", None))
+                old_dance = annotations
+                new_dance = Annotations()
+                new_dance.dance_id = next_dance_id
+                next_dance_id += 1
+                saved_dances.append(old_dance)
+                annotations = new_dance
+
+                def undo_new_dance():
+                    nonlocal annotations
+                    if saved_dances and saved_dances[-1] is old_dance:
+                        saved_dances.pop()
+                        annotations = old_dance
+
+                def redo_new_dance():
+                    nonlocal annotations
+                    saved_dances.append(old_dance)
+                    annotations = new_dance
+
+                undo_stack.append((undo_new_dance, redo_new_dance, ()))
+                redo_stack.clear()
         elif key == "space":
             # Pause/unpause
             is_in_pause_mode = not is_in_pause_mode
@@ -704,7 +745,8 @@ def do_video(
             capture_cache.set_current_frame(0)
             annotations.clear()
             saved_dances.clear()
-            session_action_history.clear()
+            undo_stack.clear()
+            redo_stack.clear()
             original_frame_image = None
             dragged_run = None
         elif key == "a":
@@ -757,39 +799,35 @@ def do_video(
                 )
         elif key == "x":
             # One linear undo spanning the whole session: pops whatever
-            # happened most recently - a marker placement, or an 'n'
-            # dance-boundary - and reverses exactly that, regardless of
-            # where the playhead is. Undoing 'n' just swaps back to the
-            # previous dance; by the time it's undo-able, every marker
-            # placed after it has already been popped off first, in order.
-            if session_action_history:
-                action_kind, action_frame = session_action_history.pop()
-                if action_kind == "new_dance":
-                    if saved_dances:
-                        annotations = saved_dances.pop()
-                elif action_kind == "waggle_start":
-                    idx = Annotations.get_annotation_index_for_frame(
-                        annotations.waggle_starts, action_frame
-                    )
-                    if idx is not None:
-                        del annotations.waggle_starts[idx]
-                elif action_kind == "thorax_position":
-                    idx = Annotations.get_annotation_index_for_frame(
-                        annotations.raw_thorax_positions, action_frame
-                    )
-                    if idx is not None:
-                        del annotations.raw_thorax_positions[idx]
+            # happened most recently - a marker placement, an 'n'
+            # dance-boundary, or a reassign-mode drag - and reverses exactly
+            # that, regardless of where the playhead is. Pushes onto the
+            # redo stack so 'z' can bring it right back.
+            if undo_stack:
+                undo_fn, redo_fn, tracked = undo_stack.pop()
+                undo_fn()
+                redo_stack.append((undo_fn, redo_fn, tracked))
+        elif key == "z":
+            # Redo whatever 'x' most recently undid. Doing anything new
+            # (another marker, 'n', or a drag) clears this stack, same as
+            # any standard undo/redo history.
+            if redo_stack:
+                undo_fn, redo_fn, tracked = redo_stack.pop()
+                redo_fn()
+                undo_stack.append((undo_fn, redo_fn, tracked))
         elif key == "backspace":
-            annotations.delete_annotations_on_frame(current_frame)
-            # Drop any undo-stack entries this just made stale, so 'x' never
-            # tries to "undo" a marker that's already gone.
-            session_action_history[:] = [
-                entry for entry in session_action_history
-                if not (
-                    entry[0] in ("waggle_start", "thorax_position")
-                    and entry[1] == current_frame
-                )
-            ]
+            deleted = annotations.delete_annotations_on_frame(current_frame)
+            # Drop any undo/redo entries this just made stale, so 'x'/'z'
+            # never try to act on a marker that's already gone.
+            if deleted:
+                undo_stack[:] = [
+                    entry for entry in undo_stack
+                    if not any(p in deleted for p in entry[2])
+                ]
+                redo_stack[:] = [
+                    entry for entry in redo_stack
+                    if not any(p in deleted for p in entry[2])
+                ]
         elif key == "f":
             max_frame_new = annotations.get_maximum_annotated_frame_index()
             max_frames = []
@@ -807,9 +845,12 @@ def do_video(
     REASSIGN_MIN_DRAG_DISTANCE = 8  # screen px - below this, treat as a stray click, not a drag
 
     def all_dances_numbered():
-        # Same 1-based numbering as the D{n}-R{m} labels: previously-saved
-        # dances, then ones queued via 'n' this session, then the active one.
-        return list(enumerate(old_annotations_list + saved_dances + [annotations], start=1))
+        # Stable per-dance numbers (dance.dance_id), not list position - so
+        # creating or removing a dance elsewhere never renumbers this one.
+        return [
+            (dance.dance_id, dance)
+            for dance in (old_annotations_list + saved_dances + [annotations])
+        ]
 
     def marker_to_screen(position):
         x, y = position.x, position.y
@@ -862,7 +903,7 @@ def do_video(
         )
 
     def finish_run_drag(screen_x, screen_y):
-        nonlocal dragged_run, saved_dances
+        nonlocal dragged_run, next_dance_id
         run = dragged_run
         dragged_run = None
         if run is None:
@@ -873,19 +914,44 @@ def do_video(
             return  # a stray click, not an actual drag - leave the run where it is
 
         source_dance = run["source_dance"]
+        start_position = run["start_position"]
+        end_position = run["end_position"]
         hit = find_nearest_marker(screen_x, screen_y, exclude_dance=source_dance)
         if hit is not None:
             _, target_dance, _ = hit
+            created_new_dance = False
         else:
+            # Dropped on empty space - this run becomes its own brand-new
+            # dance, with a fresh id that no other dance ever shares, so
+            # nothing else gets renumbered.
             target_dance = Annotations()
+            target_dance.dance_id = next_dance_id
+            next_dance_id += 1
             saved_dances.append(target_dance)
+            created_new_dance = True
 
-        if run["start_position"] is not None:
-            source_dance.waggle_starts.remove(run["start_position"])
-            target_dance.waggle_starts.append(run["start_position"])
-        if run["end_position"] is not None:
-            source_dance.raw_thorax_positions.remove(run["end_position"])
-            target_dance.raw_thorax_positions.append(run["end_position"])
+        def move_positions(src, dst):
+            if start_position is not None:
+                src.waggle_starts.remove(start_position)
+                dst.waggle_starts.append(start_position)
+            if end_position is not None:
+                src.raw_thorax_positions.remove(end_position)
+                dst.raw_thorax_positions.append(end_position)
+
+        def undo_fn():
+            move_positions(target_dance, source_dance)
+            if created_new_dance and target_dance in saved_dances and target_dance.is_empty():
+                saved_dances.remove(target_dance)
+
+        def redo_fn():
+            if created_new_dance and target_dance not in saved_dances:
+                saved_dances.append(target_dance)
+            move_positions(source_dance, target_dance)
+
+        move_positions(source_dance, target_dance)
+        tracked = tuple(p for p in (start_position, end_position) if p is not None)
+        undo_stack.append((undo_fn, redo_fn, tracked))
+        redo_stack.clear()
 
     def on_mouse_event(event):
         nonlocal is_in_draw_vector_mode, is_in_pause_mode
@@ -948,7 +1014,19 @@ def do_video(
                     return
                 annotations.update_waggle_start(current_frame, x_video, y_video)
                 if is_new_start:
-                    session_action_history.append(("waggle_start", current_frame))
+                    new_position = annotations.waggle_starts[-1]
+                    target_dance = annotations
+
+                    def undo_fn():
+                        if new_position in target_dance.waggle_starts:
+                            target_dance.waggle_starts.remove(new_position)
+
+                    def redo_fn():
+                        if new_position not in target_dance.waggle_starts:
+                            target_dance.waggle_starts.append(new_position)
+
+                    undo_stack.append((undo_fn, redo_fn, (new_position,)))
+                    redo_stack.clear()
                 is_in_draw_vector_mode = True
                 if not is_in_pause_mode:
                     is_in_pause_mode = True
@@ -969,7 +1047,19 @@ def do_video(
                     return
                 annotations.update_thorax_position(current_frame, x_video, y_video)
                 if is_new_thorax:
-                    session_action_history.append(("thorax_position", current_frame))
+                    new_position = annotations.raw_thorax_positions[-1]
+                    target_dance = annotations
+
+                    def undo_fn():
+                        if new_position in target_dance.raw_thorax_positions:
+                            target_dance.raw_thorax_positions.remove(new_position)
+
+                    def redo_fn():
+                        if new_position not in target_dance.raw_thorax_positions:
+                            target_dance.raw_thorax_positions.append(new_position)
+
+                    undo_stack.append((undo_fn, redo_fn, (new_position,)))
+                    redo_stack.clear()
 
         elif event.type == tk.EventType.Motion:
             last_mouse_position = (x_video, y_video)
@@ -1156,7 +1246,6 @@ def do_video(
             current_time=calculate_time(current_frame, video_fps),
         )
         past_dances = old_annotations_list + saved_dances
-        active_dance_number = len(past_dances) + 1
         frame = draw_bee_positions(
             frame,
             annotations,
@@ -1164,7 +1253,7 @@ def do_video(
             hide_past_annotations=hide_past_annotations,
             frame_postprocessing_pipeline=frame_postprocessing_pipeline,
             show_all=True,  # always show every run of the dance being actively annotated
-            dance_number=active_dance_number,
+            dance_number=annotations.dance_id,
             show_labels=not hide_past_annotations or reassign_mode,
         )
         if not hide_past_annotations or reassign_mode:
@@ -1177,7 +1266,7 @@ def do_video(
                     frame,
                     old_annotations,
                     current_frame=current_frame,
-                    dance_number=dance_index + 1,
+                    dance_number=old_annotations.dance_id,
                     show_labels=True,
                     show_all=(reassign_mode or dance_index == focused_dance_index),
                     frame_postprocessing_pipeline=frame_postprocessing_pipeline

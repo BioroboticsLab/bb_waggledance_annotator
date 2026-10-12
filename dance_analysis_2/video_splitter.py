@@ -20,7 +20,7 @@ import cv2 as cv
 from PIL import Image, ImageTk
 
 from .utils import open_video_capture
-from .theme import BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_RED, PLAYHEAD
+from .theme import BG, BG_PANEL, FG, FG_MUTED, ACCENT, ACCENT_RED, PLAYHEAD, blend_hex
 from .timeline_widgets import (
     draw_diamond_marker, draw_playhead, draw_frame_ruler, RULER_HEIGHT, LABEL_HEIGHT,
 )
@@ -103,6 +103,35 @@ def get_next_numbered_output(out_dir: str, base_name: str, ext: str, tag: str = 
     return highest + 1
 
 
+def get_last_exported_boundary_frame(
+    out_dir: str, base_name: str, ext: str, video_fps: float
+) -> int:
+    """
+    Finds the end timestamp of the highest-numbered 'seg<N>' already exported
+    for this video, so reopening the original file can resume exactly where
+    the last export left off instead of re-covering already-split territory.
+    Returns 0 if nothing has been exported yet.
+    """
+    pattern = os.path.join(out_dir, f"{glob.escape(base_name)}-*-seg*{glob.escape(ext)}")
+    name_re = re.compile(
+        re.escape(base_name) + r"-(\d{2}\.\d{2}\.\d{2}\.\d{3})-(\d{2}\.\d{2}\.\d{2}\.\d{3})"
+        r"-seg(\d+)" + re.escape(ext) + r"$"
+    )
+    highest_number = -1
+    end_timestamp = None
+    for candidate in glob.glob(pattern):
+        match = name_re.match(os.path.basename(candidate))
+        if not match:
+            continue
+        number = int(match.group(3))
+        if number > highest_number:
+            highest_number = number
+            end_timestamp = match.group(2)
+    if end_timestamp is None:
+        return 0
+    return int(round(parse_timestamp(end_timestamp) * video_fps))
+
+
 def nearest_keyframe_at_or_before(timestamps: List[float], t: float) -> Optional[float]:
     candidates = [kf for kf in timestamps if kf <= t]
     if candidates:
@@ -138,6 +167,12 @@ def format_display_time(seconds: float) -> str:
     # On-screen only (never used in filenames): HH:MM:SS.mmm, independent of fps.
     hours, minutes, secs, millis = _split_hms(seconds)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def parse_timestamp(timestamp: str) -> float:
+    """Inverse of format_timestamp: 'HH.MM.SS.mmm' -> seconds."""
+    hours, minutes, secs, millis = (int(part) for part in timestamp.split("."))
+    return hours * 3600 + minutes * 60 + secs + millis / 1000
 
 
 def auto_split_video(filepath: str, chunk_minutes: float) -> List[str]:
@@ -224,11 +259,24 @@ def do_split_tool(root: tk.Tk, filepath: str):
         video_fps = 30.0
     total_duration_s = total_frames / video_fps
 
-    saved_markers = load_saved_markers(filepath)
+    base_name = os.path.splitext(os.path.basename(filepath))[0]
+    ext = os.path.splitext(filepath)[1]
+    out_dir = os.path.join(os.path.dirname(filepath), f"{base_name}_segs")
+    # If this video was already (partially) split in an earlier session,
+    # resume right after the last exported segment instead of re-covering
+    # that territory - reopening the original file should pick up exactly
+    # where the last export left off, not restart from frame 0.
+    resume_boundary_frame = min(
+        get_last_exported_boundary_frame(out_dir, base_name, ext, video_fps),
+        max(total_frames - 1, 0),
+    )
+
+    saved_markers = [f for f in load_saved_markers(filepath) if f > resume_boundary_frame]
     state = dict(
-        current_frame=0,
+        current_frame=resume_boundary_frame,
         split_frames=list(saved_markers),  # sorted list of frame indices where a cut is marked
         marker_insertion_order=list(saved_markers),  # same frames, in the order they were added (for undo-last)
+        resume_boundary_frame=resume_boundary_frame,
         keyframe_timestamps=[],
         keyframes_ready=False,
         is_playing=False,
@@ -256,6 +304,18 @@ def do_split_tool(root: tk.Tk, filepath: str):
     )
     status_label.pack(fill=tk.X, padx=10)
 
+    if resume_boundary_frame > 0:
+        resume_label = tk.Label(
+            win,
+            text=(
+                f"Resuming - already exported up to "
+                f"{format_display_time(resume_boundary_frame / video_fps)} "
+                f"(dimmed region). New markers only count after that point."
+            ),
+            bg=BG, fg=ACCENT_RED,
+        )
+        resume_label.pack(fill=tk.X, padx=10)
+
     play_state_label = tk.Label(win, text="Paused (space to play)", bg=BG, fg=FG_MUTED)
     play_state_label.pack(fill=tk.X, padx=10)
 
@@ -264,7 +324,7 @@ def do_split_tool(root: tk.Tk, filepath: str):
     )
     zoom_label.pack(fill=tk.X, padx=10)
 
-    timeline_canvas = tk.Canvas(win, height=50 + LABEL_HEIGHT, bg=BG_PANEL, highlightthickness=0)
+    timeline_canvas = tk.Canvas(win, height=60 + LABEL_HEIGHT, bg=BG_PANEL, highlightthickness=0)
     timeline_canvas.pack(fill=tk.X, padx=10, pady=(4, 10))
 
     controls_frame = tk.Frame(win, bg=BG)
@@ -290,8 +350,23 @@ def do_split_tool(root: tk.Tk, filepath: str):
     def redraw_timeline():
         timeline_canvas.delete("all")
         w = timeline_canvas.winfo_width() or 900
-        h = timeline_canvas.winfo_height() or (50 + LABEL_HEIGHT)
+        h = timeline_canvas.winfo_height() or (60 + LABEL_HEIGHT)
         marker_y = LABEL_HEIGHT + (h - LABEL_HEIGHT - RULER_HEIGHT) / 2
+
+        if state["resume_boundary_frame"] > 0:
+            # Dim the region already covered by a previous export, so it's
+            # visually obvious that new markers only make sense after it.
+            # A flat pre-blended color is used instead of a stipple fill,
+            # since Tk Canvas stipples render as an opaque hatch rather
+            # than an actual dimmed/translucent look.
+            locked_x = frame_to_x(state["resume_boundary_frame"], w)
+            timeline_canvas.create_rectangle(
+                0, 0, locked_x, h, fill=blend_hex("#000000", BG_PANEL, 0.5), outline="",
+            )
+            timeline_canvas.create_line(
+                locked_x, 0, locked_x, h, fill=ACCENT_RED, width=2
+            )
+
         draw_frame_ruler(timeline_canvas, w, h, total_frames - 1, frame_to_x)
 
         for frame in state["split_frames"]:
@@ -408,6 +483,15 @@ def do_split_tool(root: tk.Tk, filepath: str):
 
     def add_split_point():
         f = state["current_frame"]
+        if f <= state["resume_boundary_frame"]:
+            messagebox.showwarning(
+                "Already exported",
+                "This point falls inside the region already exported in a "
+                "previous session (dimmed on the timeline) - place the "
+                "marker after it instead.",
+            )
+            win.focus_set()
+            return
         if 0 < f < total_frames - 1 and f not in state["split_frames"]:
             state["split_frames"].append(f)
             state["split_frames"].sort()
@@ -494,10 +578,10 @@ def do_split_tool(root: tk.Tk, filepath: str):
             )
             return
 
-        boundaries = [0] + state["split_frames"] + [total_frames]
-        base_name = os.path.splitext(os.path.basename(filepath))[0]
-        ext = os.path.splitext(filepath)[1]
-        out_dir = os.path.join(os.path.dirname(filepath), f"{base_name}_segs")
+        # Starts from resume_boundary_frame (0 unless this video was already
+        # partially split in an earlier session), never frame 0 of an
+        # already-exported region, so resuming never re-covers old ground.
+        boundaries = [state["resume_boundary_frame"]] + state["split_frames"] + [total_frames]
         os.makedirs(out_dir, exist_ok=True)
         n_segments = len(boundaries) - 1
 
@@ -568,6 +652,10 @@ def do_split_tool(root: tk.Tk, filepath: str):
         markers_path = get_markers_filepath(filepath)
         if os.path.exists(markers_path):
             os.remove(markers_path)
+        # This export always runs to the end of the video, so there's
+        # nothing left after it - lock the whole thing for the rest of this
+        # session too, not just after reopening.
+        state["resume_boundary_frame"] = total_frames - 1
         redraw_timeline()
         update_marker_list()
 
@@ -648,7 +736,7 @@ def do_split_tool(root: tk.Tk, filepath: str):
     win.protocol("WM_DELETE_WINDOW", on_close)
 
     update_marker_list()  # show any markers restored from a previous session
-    seek_to_frame(0)
+    seek_to_frame(resume_boundary_frame)
 
 
 def main():
