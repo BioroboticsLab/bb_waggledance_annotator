@@ -453,16 +453,25 @@ def do_video(
     undo_stack: List[Tuple[Callable[[], None], Callable[[], None], Tuple]] = []
     redo_stack: List[Tuple[Callable[[], None], Callable[[], None], Tuple]] = []
     old_annotations_list = Annotations.load(filepath)
-    # Stable per-dance display numbers (D{dance_id}-R{run}): assigned once,
-    # in load/creation order, and never recomputed from list position - so
-    # creating or removing a dance (e.g. a reassign-mode drag to empty
-    # space, or undoing one) never renumbers any other dance.
-    next_dance_id = 1
+    # Stable per-dance display numbers (D{dance_id}-R{run}): assigned once
+    # per dance and never recomputed from list position - so creating or
+    # removing a dance (e.g. a reassign-mode drag to empty space, or
+    # undoing one) never renumbers any OTHER dance. The number handed out
+    # for a *new* dance is always (highest id currently in use) + 1,
+    # computed fresh each time rather than from an ever-climbing counter -
+    # so once a dance is undone away, its number is free to be reused by
+    # the next one instead of leaving a permanent gap.
+    def allocate_dance_id() -> int:
+        existing_ids = [
+            dance.dance_id
+            for dance in (old_annotations_list + saved_dances + [annotations])
+            if dance.dance_id is not None
+        ]
+        return max(existing_ids, default=0) + 1
+
     for _old_dance in old_annotations_list:
-        _old_dance.dance_id = next_dance_id
-        next_dance_id += 1
-    annotations.dance_id = next_dance_id
-    next_dance_id += 1
+        _old_dance.dance_id = allocate_dance_id()
+    annotations.dance_id = allocate_dance_id()
     # Index into (old_annotations_list + saved_dances) of the past dance
     # currently "focused" via '['/']' - that dance shows all its markers too
     # (same as the always-shown active one), for reviewing one dance at a
@@ -707,7 +716,7 @@ def do_video(
     def on_key_event(event):
         nonlocal is_in_pause_mode, is_in_draw_vector_mode
         nonlocal current_frame, hide_past_annotations, original_frame_image
-        nonlocal annotations, focused_dance_index, next_dance_id
+        nonlocal annotations, focused_dance_index
         nonlocal reassign_mode, dragged_run, selected_run
         key = event.keysym.lower()
         nframes = calc_frames_to_move_tk(event, video_fps, debug)
@@ -722,10 +731,9 @@ def do_video(
             # queued and all queued dances get saved together on quit.
             if not annotations.is_empty():
                 old_dance = annotations
-                new_dance = Annotations()
-                new_dance.dance_id = next_dance_id
-                next_dance_id += 1
                 saved_dances.append(old_dance)
+                new_dance = Annotations()
+                new_dance.dance_id = allocate_dance_id()
                 annotations = new_dance
 
                 def undo_new_dance():
@@ -940,7 +948,7 @@ def do_video(
         )
 
     def finish_run_drag(screen_x, screen_y):
-        nonlocal dragged_run, next_dance_id, selected_run
+        nonlocal dragged_run, selected_run
         run = dragged_run
         dragged_run = None
         if run is None:
@@ -965,8 +973,7 @@ def do_video(
             # dance, with a fresh id that no other dance ever shares, so
             # nothing else gets renumbered.
             target_dance = Annotations()
-            target_dance.dance_id = next_dance_id
-            next_dance_id += 1
+            target_dance.dance_id = allocate_dance_id()
             saved_dances.append(target_dance)
             created_new_dance = True
 
