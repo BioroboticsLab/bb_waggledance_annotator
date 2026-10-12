@@ -479,6 +479,11 @@ def do_video(
     # Keys: source_dance, dance_number, start_position, end_position,
     # press_pos (screen xy at pickup), screen_pos (current screen xy).
     dragged_run = None
+    # A reassign-mode click that didn't move far enough to count as a drag
+    # selects that run instead (same dict shape as dragged_run) - stays set
+    # until backspace deletes it, another click replaces it, or reassign
+    # mode is left - so a run can be removed without re-annotating it.
+    selected_run = None
 
     cap = open_video_capture(filepath)
     cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
@@ -703,7 +708,7 @@ def do_video(
         nonlocal is_in_pause_mode, is_in_draw_vector_mode
         nonlocal current_frame, hide_past_annotations, original_frame_image
         nonlocal annotations, focused_dance_index, next_dance_id
-        nonlocal reassign_mode, dragged_run
+        nonlocal reassign_mode, dragged_run, selected_run
         key = event.keysym.lower()
         nframes = calc_frames_to_move_tk(event, video_fps, debug)
 
@@ -749,6 +754,7 @@ def do_video(
             redo_stack.clear()
             original_frame_image = None
             dragged_run = None
+            selected_run = None
         elif key == "a":
             move_frame_count(-nframes)
         elif key == "d":
@@ -788,6 +794,7 @@ def do_video(
             # for a brand-new dance) instead of being re-annotated.
             reassign_mode = not reassign_mode
             dragged_run = None
+            selected_run = None
             update_window_title()
         elif key == "c":
             if last_raw_frame is not None:
@@ -816,18 +823,47 @@ def do_video(
                 redo_fn()
                 undo_stack.append((undo_fn, redo_fn, tracked))
         elif key == "backspace":
-            deleted = annotations.delete_annotations_on_frame(current_frame)
-            # Drop any undo/redo entries this just made stale, so 'x'/'z'
-            # never try to act on a marker that's already gone.
-            if deleted:
-                undo_stack[:] = [
-                    entry for entry in undo_stack
-                    if not any(p in deleted for p in entry[2])
-                ]
-                redo_stack[:] = [
-                    entry for entry in redo_stack
-                    if not any(p in deleted for p in entry[2])
-                ]
+            if reassign_mode:
+                # Deletes the run selected by a reassign-mode click (not a
+                # drag) - the only way to remove a run entirely while in
+                # this mode, since a plain click there doesn't place
+                # markers. Undoable like every other reassign action.
+                if selected_run is not None:
+                    run = selected_run
+                    selected_run = None
+                    source_dance = run["source_dance"]
+                    start_position = run["start_position"]
+                    end_position = run["end_position"]
+
+                    def undo_delete():
+                        if start_position is not None and start_position not in source_dance.waggle_starts:
+                            source_dance.waggle_starts.append(start_position)
+                        if end_position is not None and end_position not in source_dance.raw_thorax_positions:
+                            source_dance.raw_thorax_positions.append(end_position)
+
+                    def redo_delete():
+                        if start_position is not None and start_position in source_dance.waggle_starts:
+                            source_dance.waggle_starts.remove(start_position)
+                        if end_position is not None and end_position in source_dance.raw_thorax_positions:
+                            source_dance.raw_thorax_positions.remove(end_position)
+
+                    redo_delete()  # perform the deletion now
+                    tracked = tuple(p for p in (start_position, end_position) if p is not None)
+                    undo_stack.append((undo_delete, redo_delete, tracked))
+                    redo_stack.clear()
+            else:
+                deleted = annotations.delete_annotations_on_frame(current_frame)
+                # Drop any undo/redo entries this just made stale, so 'x'/'z'
+                # never try to act on a marker that's already gone.
+                if deleted:
+                    undo_stack[:] = [
+                        entry for entry in undo_stack
+                        if not any(p in deleted for p in entry[2])
+                    ]
+                    redo_stack[:] = [
+                        entry for entry in redo_stack
+                        if not any(p in deleted for p in entry[2])
+                    ]
         elif key == "f":
             max_frame_new = annotations.get_maximum_annotated_frame_index()
             max_frames = []
@@ -877,7 +913,8 @@ def do_video(
         return best
 
     def begin_run_drag(screen_x, screen_y):
-        nonlocal dragged_run
+        nonlocal dragged_run, selected_run
+        selected_run = None  # starting a new press always clears the old selection
         hit = find_nearest_marker(screen_x, screen_y)
         if hit is None:
             return
@@ -903,7 +940,7 @@ def do_video(
         )
 
     def finish_run_drag(screen_x, screen_y):
-        nonlocal dragged_run, next_dance_id
+        nonlocal dragged_run, next_dance_id, selected_run
         run = dragged_run
         dragged_run = None
         if run is None:
@@ -911,7 +948,10 @@ def do_video(
         press_x, press_y = run["press_pos"]
         moved_distance = ((screen_x - press_x) ** 2 + (screen_y - press_y) ** 2) ** 0.5
         if moved_distance < REASSIGN_MIN_DRAG_DISTANCE:
-            return  # a stray click, not an actual drag - leave the run where it is
+            # A stray click, not an actual drag - select this run instead,
+            # so backspace can delete it without needing to move it anywhere.
+            selected_run = run
+            return
 
         source_dance = run["source_dance"]
         start_position = run["start_position"]
@@ -1279,7 +1319,15 @@ def do_video(
                 drag_color = dance_color_bgr(dragged_run["dance_number"])
                 cv.circle(frame, (int(gx), int(gy)), 12, drag_color, -1)
                 cv.circle(frame, (int(gx), int(gy)), 12, (255, 255, 255), 2)
-            banner = "REASSIGN MODE - drag a run onto another dance's circle (empty space = new dance)"
+            if selected_run is not None:
+                for position in (selected_run["start_position"], selected_run["end_position"]):
+                    if position is not None:
+                        sx, sy = marker_to_screen(position)
+                        cv.circle(frame, (int(sx), int(sy)), 16, (255, 255, 255), 2)
+            banner = (
+                "REASSIGN MODE - drag a run onto another dance's circle (empty space = new dance)"
+                "  |  click to select, backspace to delete"
+            )
             cv.putText(frame, banner, (10, 24), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv.LINE_AA)
             cv.putText(frame, banner, (10, 24), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
 

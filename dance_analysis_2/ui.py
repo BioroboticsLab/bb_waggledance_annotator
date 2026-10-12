@@ -143,7 +143,7 @@ class FileSelectorUI:
             ("n", "Start a fresh dance (video stays open). Nothing is saved to disk until 'q'."),
             ("x", "Undo whatever happened most recently - a marker, 'n', or a reassign-mode drag."),
             ("z", "Redo whatever 'x' most recently undid."),
-            ("backspace", "Delete annotations on the current frame."),
+            ("backspace", "Delete annotations on the current frame (or, in reassign mode, the run selected by a click)."),
         ]
 
         # Fill the table with instructions
