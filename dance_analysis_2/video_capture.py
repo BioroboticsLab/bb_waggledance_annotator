@@ -245,6 +245,7 @@ def draw_bee_positions(
     show_all: bool = False,
     dance_number: Optional[int] = None,
     show_labels: bool = False,
+    recency_window_frames: Optional[int] = None,
 ) -> np.ndarray:
     # Markers from a previous session (old_annotations_list) use the same
     # vivid colors as live annotation - a muted/grey palette made them hard
@@ -256,6 +257,21 @@ def draw_bee_positions(
     )
 
     paired_runs, unpaired_starts, unpaired_thorax = pair_runs(annotations)
+
+    def is_run_visible(start_position, end_position) -> bool:
+        # Always visible while the playhead is inside the run's own span.
+        if start_position.frame <= current_frame <= end_position.frame:
+            return True
+        if not show_all:
+            return False
+        if recency_window_frames is None:
+            return True
+        # recency_window_frames caps how far into the past "show_all" keeps
+        # a finished run visible - checked on the run's END (the later of
+        # the two markers), so a run is never split: if the end is recent
+        # enough to show, its start comes along with it even if the start
+        # itself is older than the window.
+        return end_position.frame >= current_frame - recency_window_frames
 
     if annotations.raw_thorax_positions:
         last_marker_frame = max(p.frame for p in annotations.raw_thorax_positions)
@@ -276,7 +292,7 @@ def draw_bee_positions(
     # every run from the currently-active dance visible regardless of where
     # you've scrubbed to (past/saved dances stay range-scoped to cut clutter).
     for run_number, (start_position, end_position) in enumerate(paired_runs, start=1):
-        if not show_all and not (start_position.frame <= current_frame <= end_position.frame):
+        if not is_run_visible(start_position, end_position):
             continue
 
         x, y = end_position.x, end_position.y
@@ -352,7 +368,7 @@ def draw_bee_positions(
 
     # Waggle start markers: same [start, end] visibility rule when paired.
     for run_number, (start_position, end_position) in enumerate(paired_runs, start=1):
-        if not show_all and not (start_position.frame <= current_frame <= end_position.frame):
+        if not is_run_visible(start_position, end_position):
             continue
         img = draw_waggle_start(start_position)
         draw_run_label(start_position, run_number)
@@ -515,6 +531,13 @@ def do_video(
     is_in_pause_mode = start_paused
     is_in_draw_vector_mode = False
     hide_past_annotations = False
+    # Caps how long a finished run from the active dance stays visible via
+    # "show_all" on long videos, so old markers don't keep accumulating on
+    # screen forever. None means unlimited (every run always stays visible,
+    # the original behavior). Editable live via the "Show recent" field.
+    # Defaults to 2 minutes - long enough to still see very recent context,
+    # short enough to matter on a long recording.
+    recency_window_frames: Optional[int] = round(120 * video_fps)
 
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
@@ -559,6 +582,38 @@ def do_video(
         initial=int(video_fps),  # Set initial speed to video FPS
     )
     speed_scale.pack()
+
+    recency_frame = tk.Frame(video_window, bg=BG)
+    recency_frame.pack(pady=(2, 0))
+    tk.Label(
+        recency_frame,
+        text="Show recent markers (MM:SS, blank = all):",
+        bg=BG, fg=FG,
+    ).pack(side=tk.LEFT, padx=(0, 6))
+    recency_var = tk.StringVar(value="02:00")
+    recency_entry = tk.Entry(
+        recency_frame, textvariable=recency_var, width=6,
+        bg=BG_PANEL, fg=FG, insertbackground=FG, relief=tk.FLAT,
+    )
+    recency_entry.pack(side=tk.LEFT)
+
+    def on_recency_change(event=None):
+        nonlocal recency_window_frames
+        text = recency_var.get().strip()
+        if not text:
+            recency_window_frames = None  # blank = show every run, no cap
+            return
+        try:
+            if ":" in text:
+                minutes_str, seconds_str = text.split(":", 1)
+                total_seconds = int(minutes_str) * 60 + float(seconds_str)
+            else:
+                total_seconds = float(text)
+        except ValueError:
+            return  # mid-typing / not valid yet - keep the last valid value
+        recency_window_frames = max(round(total_seconds * video_fps), 0)
+
+    recency_entry.bind("<KeyRelease>", on_recency_change)
 
 
     # Timeline strip, Blender-dopesheet style: diamond markers for every
@@ -659,14 +714,18 @@ def do_video(
 
     # Now retrieve the heights of the widgets
     speed_scale_height = speed_scale.winfo_height()
+    recency_frame_height = recency_frame.winfo_height()
     timeline_height = timeline_canvas.winfo_height()
 
     # Initialize the FramePostprocessingPipeline with video size and screen size
-    available_height = screen_height - speed_scale_height + timeline_height
+    available_height = screen_height - speed_scale_height - recency_frame_height + timeline_height
     frame_postprocessing_pipeline = FramePostprocessingPipeline(video_size=video_size, screen_size=(screen_width, available_height))
 
     # Set the initial size of the video window using target_size
-    total_window_height = frame_postprocessing_pipeline.target_size[1] + speed_scale_height + timeline_height
+    total_window_height = (
+        frame_postprocessing_pipeline.target_size[1]
+        + speed_scale_height + recency_frame_height + timeline_height
+    )
     total_window_width = frame_postprocessing_pipeline.target_size[0]
     video_window.geometry(f"{total_window_width}x{total_window_height}")
 
@@ -1199,10 +1258,12 @@ def do_video(
         window_width = event.width
         window_height = event.height
 
-        # Get the height of the speed scale and timeline to calculate available space for the video panel
+        # Get the height of the speed scale, recency field, and timeline to
+        # calculate available space for the video panel
         speed_scale_height = speed_scale.winfo_height() or 0
+        recency_frame_height = recency_frame.winfo_height() or 0
         timeline_height = timeline_canvas.winfo_height() or 0
-        available_height = window_height - (speed_scale_height + timeline_height)
+        available_height = window_height - (speed_scale_height + recency_frame_height + timeline_height)
         available_width = window_width  # The width available is the window's width
 
         # Ensure positive available dimensions
@@ -1302,6 +1363,9 @@ def do_video(
             show_all=True,  # always show every run of the dance being actively annotated
             dance_number=annotations.dance_id,
             show_labels=not hide_past_annotations or reassign_mode,
+            # Reassign mode needs every run reachable to fix misassigned
+            # ones, even very old runs that would otherwise have aged out.
+            recency_window_frames=None if reassign_mode else recency_window_frames,
         )
         if not hide_past_annotations or reassign_mode:
             # Dances already queued via 'n' this session render the same way
