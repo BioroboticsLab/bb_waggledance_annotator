@@ -1128,6 +1128,25 @@ def do_video(
                         "end position and frame before starting a new waggle run.",
                     )
                     return
+                if is_new_start:
+                    # Count-based alternation (checked above) doesn't stop a
+                    # new run from starting on a frame earlier than one
+                    # already placed - one bee can't be in two places at
+                    # once, so a new run in THIS dance must come after
+                    # everything already placed in it.
+                    existing_frames = [
+                        p.frame for p in
+                        annotations.waggle_starts + annotations.raw_thorax_positions
+                    ]
+                    if existing_frames and current_frame <= max(existing_frames):
+                        messagebox.showwarning(
+                            "Frame out of order",
+                            "A new run must start after every marker already "
+                            "placed in this dance. If this is a different, "
+                            "simultaneously-dancing bee, press 'n' to start a "
+                            "separate dance for it first.",
+                        )
+                        return
                 annotations.update_waggle_start(current_frame, x_video, y_video)
                 if is_new_start:
                     new_position = annotations.waggle_starts[-1]
@@ -1161,6 +1180,21 @@ def do_video(
                         "Please place the waggle start position and direction first.",
                     )
                     return
+                if is_new_thorax:
+                    # Count-based alternation (checked above) doesn't stop
+                    # the end from landing on a frame at or before its own
+                    # run's start - which is what produces a negative-length
+                    # run. The open start is always the latest-frame one,
+                    # since a run can only start after every prior marker
+                    # in this dance (enforced above on the start side).
+                    open_start_frame = max(p.frame for p in annotations.waggle_starts)
+                    if current_frame <= open_start_frame:
+                        messagebox.showwarning(
+                            "Frame out of order",
+                            "The thorax/end position must be on a later frame "
+                            "than this run's start.",
+                        )
+                        return
                 annotations.update_thorax_position(current_frame, x_video, y_video)
                 if is_new_thorax:
                     new_position = annotations.raw_thorax_positions[-1]
