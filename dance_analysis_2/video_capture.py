@@ -614,6 +614,7 @@ def do_video(
         recency_window_frames = max(round(total_seconds * video_fps), 0)
 
     recency_entry.bind("<KeyRelease>", on_recency_change)
+    recency_entry.bind("<Return>", lambda event: video_window.focus_set())
 
 
     # Timeline strip, Blender-dopesheet style: diamond markers for every
@@ -698,6 +699,7 @@ def do_video(
         draw_playhead(timeline_canvas, px, LABEL_HEIGHT, h - RULER_HEIGHT, frame=current_frame)
 
     def on_timeline_seek(event):
+        video_window.focus_set()  # same focus-reclaim as clicking the video itself
         w = timeline_canvas.winfo_width()
         move_frame_count(offset=0, target_frame=timeline_x_to_frame(event.x, w))
 
@@ -1079,6 +1081,14 @@ def do_video(
 
         # Update last mouse position
         last_mouse_position = (x, y)
+
+        if event.type == tk.EventType.ButtonPress:
+            # Reclaim keyboard focus from any entry field (e.g. the recency
+            # box) - tk.Label doesn't take focus on click the way an Entry
+            # does, so without this, typing into a field and then clicking
+            # the video would otherwise leave every keystroke still going
+            # to that field instead of to playback/annotation shortcuts.
+            video_window.focus_set()
 
         if reassign_mode:
             # Reassign mode replaces normal marker placement entirely while
