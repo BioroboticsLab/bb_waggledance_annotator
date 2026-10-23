@@ -511,7 +511,15 @@ def do_video(
     selected_run = None
 
     cap = open_video_capture(filepath)
-    cap.set(cv.CAP_PROP_HW_ACCELERATION, cv.VIDEO_ACCELERATION_ANY)
+    if not cap.isOpened():
+        messagebox.showerror(
+            "Could not open video",
+            f"Failed to open:\n{filepath}\n\n"
+            "This can happen if the installed OpenCV/FFmpeg build is "
+            "missing support for this file's codec or container (e.g. "
+            ".mts/.m2ts AVCHD streams on some Linux distributions).",
+        )
+        return
 
     total_frames = cap.get(cv.CAP_PROP_FRAME_COUNT)
     video_reader_fps = cap.get(cv.CAP_PROP_FPS)
