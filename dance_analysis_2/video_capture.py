@@ -51,33 +51,9 @@ class PyavVideoCapture:
         else:
             print('Found video stream:', self.video_stream)
 
-        # Set up hardware acceleration based on the OS
-        os_name = platform.system()
-        
-        if os_name == "Darwin":  # macOS
-            self.video_stream.codec_context.options = {"hwaccel": "videotoolbox"}
-            print("Hardware acceleration enabled with VideoToolbox (macOS)")
-        elif os_name == "Linux":
-            self.video_stream.codec_context.options = {"hwaccel": "cuda"}
-            print("Hardware acceleration enabled with CUDA (Linux)")
-        elif os_name == "Windows":
-            self.video_stream.codec_context.options = {"hwaccel": "d3d11va"}
-            print("Hardware acceleration enabled with DirectX Video Acceleration (Windows)")
-        else:
-            print("No compatible hardware acceleration found for this OS.")
-
         # Set thread count for parallel processing within FFmpeg
         self.video_stream.codec_context.thread_count = 4  # Adjust based on your CPU
         print(f"Thread count set to {self.video_stream.codec_context.thread_count}")
-
-    def read(self):
-        for packet in self.capture.demux(self.video_stream):
-            for frame in packet.decode():
-                if frame:
-                    frame_ndarray = frame.to_ndarray(format="bgr24")
-                    self.frame_index += 1
-                    return frame_ndarray
-        return None           
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         if self.frame_index < 0 or self.frame_index > self.length:
@@ -91,15 +67,24 @@ class PyavVideoCapture:
             # End of the video stream
             print('End of video stream')
             return False, None
-        except av.AVError as e:
-            # Handle specific PyAV errors
+        except (OSError, EOFError) as e:
+            # PyAV raises plain OSError/EOFError subclasses for decode
+            # errors/end-of-stream in modern versions (there's no
+            # av.AVError).
             print(f"Decoding error: {e}")
             return False, None
         except Exception as e:
             # Handle general errors
             print(f"Unexpected error: {e}")
             return False, None
-        # return True, frame.to_ndarray(format="bgr24")
+        if frame.interlaced_frame:
+            print(
+                "Warning: interlaced frame - converting straight to bgr24 "
+                "can produce a black frame. If you see black frames, "
+                "deinterlace the source file first, e.g.:\n"
+                "  ffmpeg -i input.mts -vf \"yadif=mode=1:deint=1\" "
+                "-c:v libx264 -crf 18 -c:a copy output_progressive.mp4"
+            )
         return True, frame.to_ndarray(format="bgr24").astype(np.uint8)
 
     def get(self, property: int) -> Optional[float]:
